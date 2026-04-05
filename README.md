@@ -53,12 +53,7 @@ Deployment steps:
 4. Keep `ALLOW_PERSISTENT_ROOM_STORAGE=true` if you want rooms stored in Postgres.
 5. Set TURN variables in Render for reliable voice/video calling across networks.
 
-Recommended Render environment variables (Daily.co):
-```env
-VITE_TURN_URLS=stun:stun.daily.co,turn:turn.daily.co:3478
-```
-
-Or for custom TURN:
+Recommended Render environment variables (authenticated TURN):
 ```env
 VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
 VITE_TURN_USERNAME=your-turn-username
@@ -70,16 +65,7 @@ If you do not configure TURN, calls may still work on the same network, but cros
 ## WebRTC Calling Setup
 For reliable voice/video calls across mobile networks and strict NATs, configure a TURN server.
 
-### Option 1: Daily.co (Recommended for multiple websites)
-1. Sign up free at https://www.daily.co
-2. Add to `.env`:
-```env
-VITE_TURN_URLS=stun:stun.daily.co,turn:turn.daily.co:3478
-```
-3. On Render, add the same variables to Environment variables.
-
-### Option 2: Self-hosted or custom TURN
-Add these variables to your `.env` file:
+Use an authenticated TURN provider (or your own coturn) and add these variables:
 ```env
 VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
 VITE_TURN_USERNAME=your-turn-username

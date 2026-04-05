@@ -140,16 +140,16 @@ export function useChat(roomId: string) {
       .map((item) => item.trim())
       .filter(Boolean);
 
-  // Default to Daily.co TURN servers for reliable WebRTC across networks (free tier)
-  const defaultTurnUrls = "stun:stun.daily.co,turn:turn.daily.co:3478";
-  const turnUrls = parseIceUrls(env.VITE_TURN_URLS || env.VITE_TURN_URL || defaultTurnUrls);
+  const turnUrls = parseIceUrls(env.VITE_TURN_URLS || env.VITE_TURN_URL);
+  const hasValidTurnCredentials = !!(env.VITE_TURN_USERNAME && env.VITE_TURN_CREDENTIAL);
+  const hasUsableTurn = turnUrls.length > 0 && hasValidTurnCredentials;
   const configuredIcePolicy = env.VITE_ICE_TRANSPORT_POLICY;
   const iceTransportPolicy: RTCIceTransportPolicy =
     configuredIcePolicy === "relay"
       ? "relay"
       : configuredIcePolicy === "all"
       ? "all"
-      : turnUrls.length > 0
+      : hasUsableTurn
       ? "relay"
       : "all";
 
@@ -170,7 +170,11 @@ export function useChat(roomId: string) {
     setConnectionState("connecting");
   }, [roomId]);
 
-  if (turnUrls.length > 0) {
+  if (turnUrls.length > 0 && !hasValidTurnCredentials) {
+    console.warn("TURN URLs provided but missing VITE_TURN_USERNAME or VITE_TURN_CREDENTIAL. Using STUN only.");
+  }
+
+  if (hasUsableTurn) {
     iceServers.push({
       urls: turnUrls,
       username: env.VITE_TURN_USERNAME,
@@ -519,7 +523,7 @@ export function useChat(roomId: string) {
             const currentState = pc.connectionState;
             if (currentState === "disconnected") {
               appendCallLog("failed");
-              const callDropMessage = turnUrls.length === 0
+              const callDropMessage = !hasUsableTurn
                 ? "Call connection lost. Add TURN server config for cross-network device support."
                 : "Call connection lost.";
               cleanupCall(true, callDropMessage);
@@ -535,7 +539,7 @@ export function useChat(roomId: string) {
         }
 
         appendCallLog("failed");
-        const callDropMessage = turnUrls.length === 0
+        const callDropMessage = !hasUsableTurn
           ? "Call connection lost. Add TURN server config for cross-network device support."
           : "Call connection lost.";
         cleanupCall(true, callDropMessage);
@@ -561,7 +565,7 @@ export function useChat(roomId: string) {
 
     pcRef.current = pc;
     return pc;
-  }, [appendCallLog, cleanupCall, iceServers, iceTransportPolicy, sendEncryptedCallSignal, turnUrls.length]);
+  }, [appendCallLog, cleanupCall, hasUsableTurn, iceServers, iceTransportPolicy, sendEncryptedCallSignal]);
 
   const getMediaErrorMessage = (error: unknown) => {
     if (!(error instanceof DOMException)) {
