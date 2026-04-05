@@ -66,8 +66,28 @@ export async function registerRoutes(
   });
 
   app.get(api.turn.credentials.path, async (_req, res) => {
+    const staticTurnUrls = (process.env.TURN_URLS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const staticTurnUsername = process.env.TURN_USERNAME;
+    const staticTurnCredential = process.env.TURN_CREDENTIAL;
+
+    if (staticTurnUrls.length > 0 && staticTurnUsername && staticTurnCredential) {
+      return res.status(200).json({
+        iceServers: [
+          {
+            urls: staticTurnUrls,
+            username: staticTurnUsername,
+            credential: staticTurnCredential,
+          },
+        ],
+        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      });
+    }
+
     const meteredDomainRaw = process.env.METERED_DOMAIN;
-    const meteredSecretKey = process.env.METERED_SECRET_KEY;
+    const meteredApiKey = process.env.METERED_API_KEY || process.env.METERED_SECRET_KEY;
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     const ttlSec = Math.max(300, Number(process.env.TWILIO_TTL_SEC || 3600));
@@ -77,9 +97,9 @@ export async function registerRoutes(
       .replace(/^https?:\/\//, "")
       .replace(/\/$/, "");
 
-    if (meteredDomain && meteredSecretKey) {
+    if (meteredDomain && meteredApiKey) {
       try {
-        const meteredUrl = `https://${meteredDomain}/api/v1/turn/credentials?apiKey=${encodeURIComponent(meteredSecretKey)}`;
+        const meteredUrl = `https://${meteredDomain}/api/v1/turn/credentials?apiKey=${encodeURIComponent(meteredApiKey)}`;
         const meteredRes = await fetch(meteredUrl, { signal: AbortSignal.timeout(5000) });
 
         if (meteredRes.ok) {
@@ -103,77 +123,64 @@ export async function registerRoutes(
           });
         }
 
-        // If Metered fails, fallback to Google STUN (works on same network)
-        console.warn(`Metered TURN failed (${meteredRes.status}), falling back to Google STUN`);
-        return res.status(200).json({
-          iceServers: [
-            { urls: ["stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] },
-          ],
-          expiresAt: Date.now() + 10 * 60 * 1000,
-        });
+        const errorText = await meteredRes.text();
+        console.warn(`Metered TURN failed (${meteredRes.status}): ${errorText}`);
       } catch (err) {
-        console.warn("Metered TURN request failed, falling back to Google STUN", err);
-        // Return Google STUN servers for fallback
-        return res.status(200).json({
-          iceServers: [
-            { urls: ["stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] },
-          ],
-          expiresAt: Date.now() + 10 * 60 * 1000,
-        });
+        console.warn("Metered TURN request failed", err);
       }
     }
 
-    if (!accountSid || !authToken) {
-      return res.status(404).json({
-        message: "TURN provider is not configured",
-      });
-    }
+    if (accountSid && authToken) {
+      try {
+        const tokenUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Tokens.json`;
+        const body = new URLSearchParams({ Ttl: String(ttlSec) });
+        const authHeader = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
 
-    try {
-      const tokenUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Tokens.json`;
-      const body = new URLSearchParams({ Ttl: String(ttlSec) });
-      const authHeader = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
-
-      const twilioRes = await fetch(tokenUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${authHeader}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body,
-      });
-
-      if (!twilioRes.ok) {
-        return res.status(502).json({
-          message: "Failed to fetch TURN credentials",
+        const twilioRes = await fetch(tokenUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${authHeader}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body,
         });
+
+        if (twilioRes.ok) {
+          const twilioData = await twilioRes.json() as {
+            ice_servers?: Array<{
+              urls: string | string[];
+              username?: string;
+              credential?: string;
+            }>;
+          };
+
+          const iceServers = (twilioData.ice_servers || [])
+            .filter((server) => !!server?.urls)
+            .map((server) => ({
+              urls: server.urls,
+              username: server.username,
+              credential: server.credential,
+            }));
+
+          return res.status(200).json({
+            iceServers,
+            expiresAt: Date.now() + ttlSec * 1000,
+          });
+        }
+
+        const twilioErrText = await twilioRes.text();
+        console.warn(`Twilio TURN failed (${twilioRes.status}): ${twilioErrText}`);
+      } catch (err) {
+        console.warn("Twilio TURN request failed", err);
       }
-
-      const twilioData = await twilioRes.json() as {
-        ice_servers?: Array<{
-          urls: string | string[];
-          username?: string;
-          credential?: string;
-        }>;
-      };
-
-      const iceServers = (twilioData.ice_servers || [])
-        .filter((server) => !!server?.urls)
-        .map((server) => ({
-          urls: server.urls,
-          username: server.username,
-          credential: server.credential,
-        }));
-
-      return res.status(200).json({
-        iceServers,
-        expiresAt: Date.now() + ttlSec * 1000,
-      });
-    } catch {
-      return res.status(502).json({
-        message: "TURN provider request failed",
-      });
     }
+
+    return res.status(200).json({
+      iceServers: [
+        { urls: ["stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302", "stun:stun.cloudflare.com:3478"] },
+      ],
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
   });
 
   const presenceMap = new Map<string, {
