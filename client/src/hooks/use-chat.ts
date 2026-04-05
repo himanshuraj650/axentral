@@ -189,6 +189,7 @@ export function useChat(roomId: string) {
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const pendingEncryptedCallSignalsRef = useRef<Array<{ encryptedPayload: string; iv: string }>>([]);
   const callStateRef = useRef<CallState>(callState);
   const outgoingCallTimeoutRef = useRef<number | null>(null);
   const incomingAlertIntervalRef = useRef<number | null>(null);
@@ -728,6 +729,105 @@ export function useChat(roomId: string) {
     return "Could not access microphone/camera.";
   };
 
+  const handleCallSignal = useCallback(async (signal: SignalPayload) => {
+    if (signal.kind === "call-offer") {
+      if (
+        callStateRef.current.isInCall ||
+        callStateRef.current.isReceiving ||
+        callStateRef.current.isCalling
+      ) {
+        await sendEncryptedCallSignal({ kind: "call-reject" });
+        return;
+      }
+
+      pendingOfferRef.current = {
+        callType: signal.callType,
+        sdp: signal.sdp,
+      };
+
+      callMetaRef.current = {
+        direction: "incoming",
+        callType: signal.callType,
+        startedAt: Date.now(),
+        answeredAt: null,
+      };
+
+      if (document.hidden || !document.hasFocus()) {
+        showToast({
+          title: "Incoming call",
+          description: `${signal.callType === "video" ? "Video" : "Voice"} call in room ${roomId}`,
+        });
+      }
+
+      startIncomingAlert();
+
+      setCallState((prev) => ({
+        ...prev,
+        isReceiving: true,
+        isCalling: false,
+        isInCall: false,
+        callType: signal.callType,
+        status: "incoming",
+        startedAt: Date.now(),
+        durationSec: 0,
+      }));
+      return;
+    }
+
+    if (signal.kind === "call-answer") {
+      if (pcRef.current) {
+        clearOutgoingCallTimeout();
+
+        await pcRef.current.setRemoteDescription(signal.sdp);
+
+        await flushPendingIceCandidates(pcRef.current);
+
+        setCallState((prev) => ({
+          ...prev,
+          isCalling: false,
+          isInCall: true,
+          status: "active",
+        }));
+      }
+      return;
+    }
+
+    if (signal.kind === "ice-candidate") {
+      if (pcRef.current) {
+        if (pcRef.current.remoteDescription) {
+          try {
+            await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          } catch {
+            // Ignore invalid/stale candidates from transport race conditions.
+          }
+        } else {
+          pendingIceCandidatesRef.current.push(signal.candidate);
+        }
+      }
+      return;
+    }
+
+    if (signal.kind === "call-end") {
+      const outcome = callStateRef.current.status === "incoming" ? "missed" : callStateRef.current.status === "active" ? "completed" : "cancelled";
+      appendCallLog(outcome);
+
+      if (outcome === "missed" && (document.hidden || !document.hasFocus())) {
+        showToast({
+          title: "Missed call",
+          description: `Missed ${callStateRef.current.callType || "voice"} call in room ${roomId}`,
+        });
+      }
+
+      cleanupCall(true, "Call ended.");
+      return;
+    }
+
+    if (signal.kind === "call-reject") {
+      appendCallLog("rejected");
+      cleanupCall(true, "Call declined by peer.");
+    }
+  }, [appendCallLog, cleanupCall, flushPendingIceCandidates, roomId, sendEncryptedCallSignal]);
+
   // Auto-delete expired messages
   useEffect(() => {
     const interval = setInterval(() => {
@@ -871,6 +971,26 @@ export function useChat(roomId: string) {
               sharedSecretRef.current = secret;
 
               setConnectionState("secured");
+
+              if (pendingEncryptedCallSignalsRef.current.length > 0) {
+                const queuedSignals = [...pendingEncryptedCallSignalsRef.current];
+                pendingEncryptedCallSignalsRef.current = [];
+
+                for (const queued of queuedSignals) {
+                  try {
+                    const decryptedSignal = await decryptMessage(
+                      queued.encryptedPayload,
+                      queued.iv,
+                      sharedSecretRef.current
+                    );
+
+                    const signal = JSON.parse(decryptedSignal) as SignalPayload;
+                    await handleCallSignal(signal);
+                  } catch {
+                    // Ignore malformed queued signals.
+                  }
+                }
+              }
             }
           }
 
@@ -913,7 +1033,13 @@ export function useChat(roomId: string) {
           else if (parsed.type === "callSignal") {
             const data = wsEvents.receive.callSignal.parse(parsed.payload);
 
-            if (!sharedSecretRef.current) return;
+            if (!sharedSecretRef.current) {
+              pendingEncryptedCallSignalsRef.current.push({
+                encryptedPayload: data.encryptedPayload,
+                iv: data.iv,
+              });
+              return;
+            }
 
             const decryptedSignal = await decryptMessage(
               data.encryptedPayload,
@@ -922,97 +1048,7 @@ export function useChat(roomId: string) {
             );
 
             const signal = JSON.parse(decryptedSignal) as SignalPayload;
-
-            if (signal.kind === "call-offer") {
-              if (
-                callStateRef.current.isInCall ||
-                callStateRef.current.isReceiving ||
-                callStateRef.current.isCalling
-              ) {
-                await sendEncryptedCallSignal({ kind: "call-reject" });
-                return;
-              }
-
-              pendingOfferRef.current = {
-                callType: signal.callType,
-                sdp: signal.sdp,
-              };
-
-              callMetaRef.current = {
-                direction: "incoming",
-                callType: signal.callType,
-                startedAt: Date.now(),
-                answeredAt: null,
-              };
-
-              if (document.hidden || !document.hasFocus()) {
-                showToast({
-                  title: "Incoming call",
-                  description: `${signal.callType === "video" ? "Video" : "Voice"} call in room ${roomId}`,
-                });
-              }
-
-              startIncomingAlert();
-
-              setCallState((prev) => ({
-                ...prev,
-                isReceiving: true,
-                isCalling: false,
-                isInCall: false,
-                callType: signal.callType,
-                status: "incoming",
-                startedAt: Date.now(),
-                durationSec: 0,
-              }));
-            }
-
-            else if (signal.kind === "call-answer") {
-              if (pcRef.current) {
-                clearOutgoingCallTimeout();
-
-                  await pcRef.current.setRemoteDescription(signal.sdp);
-
-                await flushPendingIceCandidates(pcRef.current);
-
-                setCallState((prev) => ({
-                  ...prev,
-                  isCalling: false,
-                  isInCall: true,
-                  status: "active",
-                   }));
-              }
-            }
-
-            else if (signal.kind === "ice-candidate") {
-              if (pcRef.current) {
-                if (pcRef.current.remoteDescription) {
-                  await pcRef.current.addIceCandidate(
-                    new RTCIceCandidate(signal.candidate)
-                  );
-                } else {
-                  pendingIceCandidatesRef.current.push(signal.candidate);
-                }
-              }
-            }
-
-            else if (signal.kind === "call-end") {
-              const outcome = callStateRef.current.status === "incoming" ? "missed" : callStateRef.current.status === "active" ? "completed" : "cancelled";
-              appendCallLog(outcome);
-
-              if (outcome === "missed" && (document.hidden || !document.hasFocus())) {
-                showToast({
-                  title: "Missed call",
-                  description: `Missed ${callStateRef.current.callType || "voice"} call in room ${roomId}`,
-                });
-              }
-
-              cleanupCall(true, "Call ended.");
-            }
-
-            else if (signal.kind === "call-reject") {
-              appendCallLog("rejected");
-              cleanupCall(true, "Call declined by peer.");
-            }
+            await handleCallSignal(signal);
           }
 
           else if (parsed.type === "pong") {
@@ -1041,7 +1077,7 @@ export function useChat(roomId: string) {
       setConnectionState("error");
       setErrorMsg("Failed to initialize encryption");
     }
-  }, [cleanupCall, flushPendingIceCandidates, roomId, sendEncryptedCallSignal]);
+  }, [cleanupCall, handleCallSignal, roomId]);
 
   useEffect(() => {
     connect();
