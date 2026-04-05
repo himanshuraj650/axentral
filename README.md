@@ -56,13 +56,13 @@ Deployment steps:
 Recommended Render environment variables (Metered TURN):
 ```env
 METERED_DOMAIN=yourappname.metered.live
-METERED_SECRET_KEY=your_metered_secret_key
+METERED_API_KEY=your_metered_api_key
 VITE_ICE_TRANSPORT_POLICY=relay
 ```
 
 Security note:
-- Keep `METERED_SECRET_KEY` only on server-side env (Render Environment).
-- Never expose `METERED_SECRET_KEY` in frontend code or public repos.
+- Keep `METERED_API_KEY` only on server-side env (Render Environment).
+- Never expose `METERED_API_KEY` in frontend code or public repos.
 
 Optional Twilio token-based TURN:
 ```env
@@ -73,9 +73,9 @@ TWILIO_TTL_SEC=3600
 
 Optional static TURN override (non-Twilio providers):
 ```env
-VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
-VITE_TURN_USERNAME=your-turn-username
-VITE_TURN_CREDENTIAL=your-turn-password
+TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
+TURN_USERNAME=your-turn-username
+TURN_CREDENTIAL=your-turn-password
 ```
 
 If you do not configure TURN, calls may still work on the same network, but cross-network voice/video reliability will be lower.
@@ -85,13 +85,19 @@ For reliable voice/video calls across mobile networks and strict NATs, configure
 
 ### Option 1: Metered TURN (recommended)
 1. Create account at Metered dashboard.
-2. Open Realtime/TURN section and copy `urls`, `username`, `credential`.
+2. Open Developers and copy `METERED_DOMAIN` + API key.
 3. Add these variables in Render:
 ```env
-VITE_TURN_URLS=turn:your-metered-host:80?transport=tcp,turn:your-metered-host:80?transport=udp,turn:your-metered-host:443?transport=tcp,turns:your-metered-host:443?transport=tcp
-VITE_TURN_USERNAME=your_metered_username
-VITE_TURN_CREDENTIAL=your_metered_credential
+METERED_DOMAIN=yourappname.metered.live
+METERED_API_KEY=your_metered_api_key
 VITE_ICE_TRANSPORT_POLICY=relay
+```
+
+Optional static Metered override:
+```env
+TURN_URLS=turn:global.relay.metered.ca:80,turn:global.relay.metered.ca:80?transport=tcp,turn:global.relay.metered.ca:443,turns:global.relay.metered.ca:443?transport=tcp
+TURN_USERNAME=your_metered_username
+TURN_CREDENTIAL=your_metered_password
 ```
 
 ### Option 2: Twilio Network Traversal
@@ -105,13 +111,13 @@ VITE_ICE_TRANSPORT_POLICY=relay
 ### Option 3: Any authenticated TURN provider
 Add these variables to your `.env` file:
 ```env
-VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
-VITE_TURN_USERNAME=your-turn-username
-VITE_TURN_CREDENTIAL=your-turn-password
+TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
+TURN_USERNAME=your-turn-username
+TURN_CREDENTIAL=your-turn-password
 ```
 
 Notes:
-- `VITE_TURN_URLS` can contain one or multiple endpoints separated by commas.
+- `TURN_URLS` can contain one or multiple endpoints separated by commas.
 - STUN is already enabled by default and works for same-network calls.
 - TURN (or a cloud service) is recommended for production-grade cross-network connectivity.
 
