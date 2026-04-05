@@ -140,7 +140,9 @@ export function useChat(roomId: string) {
       .map((item) => item.trim())
       .filter(Boolean);
 
-  const turnUrls = parseIceUrls(env.VITE_TURN_URLS || env.VITE_TURN_URL);
+  // Default to Daily.co TURN servers for reliable WebRTC across networks (free tier)
+  const defaultTurnUrls = "stun:stun.daily.co,turn:turn.daily.co:3478";
+  const turnUrls = parseIceUrls(env.VITE_TURN_URLS || env.VITE_TURN_URL || defaultTurnUrls);
   const configuredIcePolicy = env.VITE_ICE_TRANSPORT_POLICY;
   const iceTransportPolicy: RTCIceTransportPolicy =
     configuredIcePolicy === "relay"
