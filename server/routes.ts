@@ -80,35 +80,41 @@ export async function registerRoutes(
     if (meteredDomain && meteredSecretKey) {
       try {
         const meteredUrl = `https://${meteredDomain}/api/v1/turn/credentials?apiKey=${encodeURIComponent(meteredSecretKey)}`;
-        const meteredRes = await fetch(meteredUrl);
+        const meteredRes = await fetch(meteredUrl, { signal: AbortSignal.timeout(5000) });
 
-        if (!meteredRes.ok) {
-          return res.status(502).json({
-            message: "Failed to fetch TURN credentials",
+        if (meteredRes.ok) {
+          const meteredIceServers = await meteredRes.json() as Array<{
+            urls: string | string[];
+            username?: string;
+            credential?: string;
+          }>;
+
+          const iceServers = (meteredIceServers || [])
+            .filter((server) => !!server?.urls)
+            .map((server) => ({
+              urls: server.urls,
+              username: server.username,
+              credential: server.credential,
+            }));
+
+          return res.status(200).json({
+            iceServers,
+            expiresAt: Date.now() + 10 * 60 * 1000,
           });
         }
 
-        const meteredIceServers = await meteredRes.json() as Array<{
-          urls: string | string[];
-          username?: string;
-          credential?: string;
-        }>;
-
-        const iceServers = (meteredIceServers || [])
-          .filter((server) => !!server?.urls)
-          .map((server) => ({
-            urls: server.urls,
-            username: server.username,
-            credential: server.credential,
-          }));
-
+        // If Metered fails, fallback to STUN-only (empty TURN)
+        console.warn(`Metered TURN failed (${meteredRes.status}), falling back to STUN-only`);
         return res.status(200).json({
-          iceServers,
+          iceServers: [],
           expiresAt: Date.now() + 10 * 60 * 1000,
         });
-      } catch {
-        return res.status(502).json({
-          message: "TURN provider request failed",
+      } catch (err) {
+        console.warn("Metered TURN request failed, falling back to STUN-only", err);
+        // Return empty ICE servers so client falls back to STUN
+        return res.status(200).json({
+          iceServers: [],
+          expiresAt: Date.now() + 10 * 60 * 1000,
         });
       }
     }
