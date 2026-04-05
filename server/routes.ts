@@ -79,15 +79,14 @@ export async function registerRoutes(
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const effectiveStaticTurnUrls = staticTurnUrls.length > 0 ? staticTurnUrls : hardcodedFallbackTurnUrls;
-    const staticTurnUsername = process.env.TURN_USERNAME || hardcodedFallbackTurnUsername;
-    const staticTurnCredential = process.env.TURN_CREDENTIAL || hardcodedFallbackTurnCredential;
+    const staticTurnUsername = process.env.TURN_USERNAME;
+    const staticTurnCredential = process.env.TURN_CREDENTIAL;
 
-    if (effectiveStaticTurnUrls.length > 0 && staticTurnUsername && staticTurnCredential) {
+    if (staticTurnUrls.length > 0 && staticTurnUsername && staticTurnCredential) {
       return res.status(200).json({
         iceServers: [
           {
-            urls: effectiveStaticTurnUrls,
+            urls: staticTurnUrls,
             username: staticTurnUsername,
             credential: staticTurnCredential,
           },
@@ -183,6 +182,19 @@ export async function registerRoutes(
       } catch (err) {
         console.warn("Twilio TURN request failed", err);
       }
+    }
+
+    if (hardcodedFallbackTurnUrls.length > 0 && hardcodedFallbackTurnUsername && hardcodedFallbackTurnCredential) {
+      return res.status(200).json({
+        iceServers: [
+          {
+            urls: hardcodedFallbackTurnUrls,
+            username: hardcodedFallbackTurnUsername,
+            credential: hardcodedFallbackTurnCredential,
+          },
+        ],
+        expiresAt: Date.now() + 60 * 60 * 1000,
+      });
     }
 
     return res.status(200).json({
