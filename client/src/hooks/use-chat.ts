@@ -218,7 +218,7 @@ export function useChat(roomId: string) {
   const hasValidTurnCredentials = !!(env.VITE_TURN_USERNAME && env.VITE_TURN_CREDENTIAL);
   const hasUsableTurn = turnUrls.length > 0 && hasValidTurnCredentials;
   const configuredIcePolicy = env.VITE_ICE_TRANSPORT_POLICY;
-  const iceTransportPolicy: RTCIceTransportPolicy =
+  const preferredIceTransportPolicy: RTCIceTransportPolicy =
     configuredIcePolicy === "relay"
       ? "relay"
       : configuredIcePolicy === "all"
@@ -560,10 +560,14 @@ export function useChat(roomId: string) {
     pendingIceCandidatesRef.current = [];
 
     const resolvedIceServers = await resolveIceServers();
+    const effectiveIceTransportPolicy: RTCIceTransportPolicy =
+      preferredIceTransportPolicy === "relay" && !hasActiveTurnRef.current
+        ? "all"
+        : preferredIceTransportPolicy;
 
     const pc = new RTCPeerConnection({
       iceServers: resolvedIceServers,
-      iceTransportPolicy,
+      iceTransportPolicy: effectiveIceTransportPolicy,
       iceCandidatePoolSize: 8,
     });
 
@@ -598,6 +602,26 @@ export function useChat(roomId: string) {
       if (incomingStream) {
         remoteStreamRef.current = incomingStream;
         setCallState((prev) => ({ ...prev, remoteStream: incomingStream }));
+        return;
+      }
+
+      // Some browsers/devices emit tracks without event.streams populated.
+      if (!event.track) {
+        return;
+      }
+
+      if (!remoteStreamRef.current) {
+        remoteStreamRef.current = new MediaStream();
+        setCallState((prev) => ({ ...prev, remoteStream: remoteStreamRef.current }));
+      }
+
+      const alreadyExists = remoteStreamRef.current
+        .getTracks()
+        .some((track) => track.id === event.track.id);
+
+      if (!alreadyExists) {
+        remoteStreamRef.current.addTrack(event.track);
+        setCallState((prev) => ({ ...prev, remoteStream: remoteStreamRef.current }));
       }
     };
 
@@ -682,7 +706,7 @@ export function useChat(roomId: string) {
 
     pcRef.current = pc;
     return pc;
-  }, [appendCallLog, cleanupCall, iceTransportPolicy, resolveIceServers, sendEncryptedCallSignal]);
+  }, [appendCallLog, cleanupCall, preferredIceTransportPolicy, resolveIceServers, sendEncryptedCallSignal]);
 
   const getMediaErrorMessage = (error: unknown) => {
     if (!(error instanceof DOMException)) {
