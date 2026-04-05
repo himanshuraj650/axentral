@@ -551,8 +551,6 @@ export function useChat(roomId: string) {
   );
 
   const createPeerConnection = useCallback(async () => {
-    pendingIceCandidatesRef.current = [];
-
     const resolvedIceServers = await resolveIceServers();
     const effectiveIceTransportPolicy: RTCIceTransportPolicy =
       preferredIceTransportPolicy === "relay" && !hasActiveTurnRef.current
@@ -786,16 +784,20 @@ export function useChat(roomId: string) {
     }
 
     if (signal.kind === "ice-candidate") {
-      if (pcRef.current) {
-        if (pcRef.current.remoteDescription) {
-          try {
-            await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
-          } catch {
-            // Ignore invalid/stale candidates from transport race conditions.
-          }
-        } else {
-          pendingIceCandidatesRef.current.push(signal.candidate);
+      if (!pcRef.current) {
+        // Candidate can arrive before peer connection exists (common on mobile/slow devices).
+        pendingIceCandidatesRef.current.push(signal.candidate);
+        return;
+      }
+
+      if (pcRef.current.remoteDescription) {
+        try {
+          await pcRef.current.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        } catch {
+          // Ignore invalid/stale candidates from transport race conditions.
         }
+      } else {
+        pendingIceCandidatesRef.current.push(signal.candidate);
       }
       return;
     }
