@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: axyntrel
+    env: node
+    plan: free
+    buildCommand: npm run db:push && npm run build
+    startCommand: npm run start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ALLOW_PERSISTENT_ROOM_STORAGE
+        value: "true"
+      - key: ALLOW_SERVER_CALL_LOGS
+        value: "false"
+      - fromDatabaseUrl:
+          type: postgres
+          property: connectionString
+        key: DATABASE_URL
+  - type: pserv
+    name: axyntrel-db
+    env: postgres
+    plan: free
+    # database is shared across services
