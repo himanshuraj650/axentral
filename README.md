@@ -53,7 +53,12 @@ Deployment steps:
 4. Keep `ALLOW_PERSISTENT_ROOM_STORAGE=true` if you want rooms stored in Postgres.
 5. Set TURN variables in Render for reliable voice/video calling across networks.
 
-Recommended Render environment variables:
+Recommended Render environment variables (Daily.co):
+```env
+VITE_TURN_URLS=stun:stun.daily.co,turn:turn.daily.co:3478
+```
+
+Or for custom TURN:
 ```env
 VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
 VITE_TURN_USERNAME=your-turn-username
@@ -65,8 +70,16 @@ If you do not configure TURN, calls may still work on the same network, but cros
 ## WebRTC Calling Setup
 For reliable voice/video calls across mobile networks and strict NATs, configure a TURN server.
 
-Add these variables to your `.env` file:
+### Option 1: Daily.co (Recommended for multiple websites)
+1. Sign up free at https://www.daily.co
+2. Add to `.env`:
+```env
+VITE_TURN_URLS=stun:stun.daily.co,turn:turn.daily.co:3478
+```
+3. On Render, add the same variables to Environment variables.
 
+### Option 2: Self-hosted or custom TURN
+Add these variables to your `.env` file:
 ```env
 VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
 VITE_TURN_USERNAME=your-turn-username
@@ -74,8 +87,9 @@ VITE_TURN_CREDENTIAL=your-turn-password
 ```
 
 Notes:
-- `VITE_TURN_URLS` can contain one or multiple TURN endpoints separated by commas.
-- STUN is already enabled by default, but TURN is recommended for production-grade connectivity.
+- `VITE_TURN_URLS` can contain one or multiple endpoints separated by commas.
+- STUN is already enabled by default and works for same-network calls.
+- TURN (or a cloud service) is recommended for production-grade cross-network connectivity.
 
 ## Tech Stack
 - **Frontend:** React
