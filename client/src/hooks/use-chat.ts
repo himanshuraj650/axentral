@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { io, type Socket } from "socket.io-client";
 import { api, buildUrl, wsEvents } from "@shared/routes";
 import { toast as showToast } from "@/hooks/use-toast";
 import {
@@ -83,6 +84,76 @@ export type ConnectionState =
   | "disconnected"
   | "error";
 
+type CompatSocketMessage = { data: string };
+
+type CompatSocket = {
+  readyState: number;
+  onopen: (() => void) | null;
+  onclose: (() => void) | null;
+  onerror: (() => void) | null;
+  onmessage: ((event: CompatSocketMessage) => void) | null;
+  send: (data: string) => void;
+  close: () => void;
+};
+
+const WS_READY_STATE = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3,
+} as const;
+
+function createSocketIoCompatSocket(): CompatSocket {
+  const socket: Socket = io({
+    path: "/socket.io",
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+  });
+
+  const compat: CompatSocket = {
+    readyState: WS_READY_STATE.CONNECTING,
+    onopen: null,
+    onclose: null,
+    onerror: null,
+    onmessage: null,
+    send: (data: string) => {
+      try {
+        socket.emit("signal", JSON.parse(data));
+      } catch {
+        compat.onerror?.();
+      }
+    },
+    close: () => {
+      if (compat.readyState === WS_READY_STATE.CLOSED) return;
+      compat.readyState = WS_READY_STATE.CLOSING;
+      socket.disconnect();
+      compat.readyState = WS_READY_STATE.CLOSED;
+    },
+  };
+
+  socket.on("connect", () => {
+    compat.readyState = WS_READY_STATE.OPEN;
+    compat.onopen?.();
+  });
+
+  socket.on("disconnect", () => {
+    compat.readyState = WS_READY_STATE.CLOSED;
+    compat.onclose?.();
+  });
+
+  socket.on("connect_error", () => {
+    compat.onerror?.();
+  });
+
+  socket.on("signal", (message: unknown) => {
+    compat.onmessage?.({ data: JSON.stringify(message) });
+  });
+
+  return compat;
+}
+
 export function useChat(roomId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connectionState, setConnectionState] =
@@ -106,7 +177,7 @@ export function useChat(roomId: string) {
   });
   const [callLogs, setCallLogs] = useState<CallLog[]>([]);
 
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<CompatSocket | null>(null);
   const keyPairRef = useRef<CryptoKeyPair | null>(null);
   const sharedSecretRef = useRef<CryptoKey | null>(null);
   const myPublicKeyBase64Ref = useRef<string | null>(null);
@@ -462,7 +533,7 @@ export function useChat(roomId: string) {
       if (
         !wsRef.current ||
         !sharedSecretRef.current ||
-        wsRef.current.readyState !== WebSocket.OPEN
+        wsRef.current.readyState !== WS_READY_STATE.OPEN
       ) {
         return false;
       }
@@ -684,12 +755,7 @@ export function useChat(roomId: string) {
 
       myPublicKeyBase64Ref.current = await exportPublicKey(keyPair.publicKey);
 
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const host = window.location.host || "localhost:5000";
-
-      const wsUrl = `${protocol}//${host}/ws`;
-
-      const ws = new WebSocket(wsUrl);
+      const ws = createSocketIoCompatSocket();
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -697,7 +763,7 @@ export function useChat(roomId: string) {
 
         clearHeartbeat();
         heartbeatIntervalRef.current = window.setInterval(() => {
-          if (ws.readyState !== WebSocket.OPEN) return;
+          if (ws.readyState !== WS_READY_STATE.OPEN) return;
           ws.send(JSON.stringify({ type: "ping", payload: { ts: Date.now() } }));
         }, 20_000);
 
@@ -983,7 +1049,7 @@ export function useChat(roomId: string) {
     if (
       !wsRef.current ||
       !sharedSecretRef.current ||
-      wsRef.current.readyState !== WebSocket.OPEN
+      wsRef.current.readyState !== WS_READY_STATE.OPEN
     ) {
       return false;
     }
@@ -1026,7 +1092,7 @@ export function useChat(roomId: string) {
   };
 
   const sendTypingStatus = (isTyping: boolean) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    if (wsRef.current && wsRef.current.readyState === WS_READY_STATE.OPEN) {
       wsRef.current.send(
         JSON.stringify({
           type: "typing",

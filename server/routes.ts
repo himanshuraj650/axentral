@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
 import { api, wsEvents } from "@shared/routes";
 import { z } from "zod";
@@ -435,6 +436,194 @@ export async function registerRoutes(
 
     inviteMap.set(userId, invites.filter((invite) => invite.roomId !== roomId));
     return res.status(200).json({ ok: true });
+  });
+
+  const io = new SocketIOServer(httpServer, {
+    path: "/socket.io",
+    cors: {
+      origin: (origin, callback) => {
+        if (isOriginAllowed(origin, undefined)) {
+          callback(null, true);
+          return;
+        }
+        callback(new Error("Origin not allowed"));
+      },
+      credentials: true,
+      methods: ["GET", "POST"],
+    },
+  });
+
+  const ioRoomsMap = new Map<string, Set<string>>();
+  const ioRateState = new Map<string, { count: number; windowStart: number }>();
+
+  const isWithinIoRateLimit = (socketId: string) => {
+    const now = Date.now();
+    const state = ioRateState.get(socketId);
+
+    if (!state || now - state.windowStart >= WS_RATE_WINDOW_MS) {
+      ioRateState.set(socketId, { count: 1, windowStart: now });
+      return true;
+    }
+
+    state.count += 1;
+    return state.count <= WS_RATE_MAX_MESSAGES;
+  };
+
+  const leaveIoRoom = (socketId: string, roomId: string | null) => {
+    if (!roomId || !ioRoomsMap.has(roomId)) return;
+
+    const roomClients = ioRoomsMap.get(roomId)!;
+    roomClients.delete(socketId);
+
+    io.to(roomId).emit("signal", {
+      type: "userLeft",
+      payload: { clientsCount: roomClients.size },
+    });
+
+    if (roomClients.size === 0) {
+      ioRoomsMap.delete(roomId);
+    }
+  };
+
+  io.on("connection", (socket) => {
+    let currentRoomId: string | null = null;
+
+    socket.on("signal", async (rawMessage: any) => {
+      try {
+        if (!isWithinIoRateLimit(socket.id)) {
+          socket.emit("signal", {
+            type: "error",
+            payload: { message: "Rate limit exceeded" },
+          });
+          return;
+        }
+
+        const payloadSize = Buffer.byteLength(JSON.stringify(rawMessage ?? {}));
+        if (payloadSize > WS_MAX_PAYLOAD_BYTES) {
+          socket.emit("signal", {
+            type: "error",
+            payload: { message: "Payload too large" },
+          });
+          return;
+        }
+
+        const type = rawMessage?.type;
+        const payload = rawMessage?.payload;
+
+        if (type === "ping") {
+          socket.emit("signal", {
+            type: "pong",
+            payload: { ts: Date.now() },
+          });
+          return;
+        }
+
+        if (type === "join") {
+          const parsed = wsEvents.send.join.parse(payload);
+          const requestedRoomId = parsed.roomId.trim().toUpperCase();
+          const existingRoom = await storage.getRoom(requestedRoomId);
+
+          if (!existingRoom) {
+            socket.emit("signal", {
+              type: "error",
+              payload: { message: "Room does not exist" },
+            });
+            return;
+          }
+
+          if (currentRoomId && currentRoomId !== requestedRoomId) {
+            socket.leave(currentRoomId);
+            leaveIoRoom(socket.id, currentRoomId);
+          }
+
+          if (!ioRoomsMap.has(requestedRoomId)) {
+            ioRoomsMap.set(requestedRoomId, new Set());
+          }
+
+          const roomClients = ioRoomsMap.get(requestedRoomId)!;
+          if (!roomClients.has(socket.id) && roomClients.size >= 2) {
+            socket.emit("signal", {
+              type: "error",
+              payload: { message: "Room is full" },
+            });
+            return;
+          }
+
+          currentRoomId = requestedRoomId;
+          roomClients.add(socket.id);
+          socket.join(requestedRoomId);
+
+          io.to(requestedRoomId).emit("signal", {
+            type: "userJoined",
+            payload: { clientsCount: roomClients.size },
+          });
+          return;
+        }
+
+        if (!currentRoomId) return;
+
+        if (type === "publicKey") {
+          const parsed = wsEvents.send.publicKey.parse(payload);
+          socket.to(currentRoomId).emit("signal", {
+            type: "publicKey",
+            payload: { publicKey: parsed.publicKey },
+          });
+          return;
+        }
+
+        if (type === "message") {
+          const parsed = wsEvents.send.message.parse(payload);
+          socket.to(currentRoomId).emit("signal", {
+            type: "message",
+            payload: {
+              encryptedPayload: parsed.encryptedPayload,
+              iv: parsed.iv,
+              timestamp: Date.now(),
+            },
+          });
+          return;
+        }
+
+        if (type === "typing") {
+          const parsed = wsEvents.send.typing.parse(payload);
+          socket.to(currentRoomId).emit("signal", {
+            type: "typing",
+            payload: { isTyping: parsed.isTyping },
+          });
+          return;
+        }
+
+        if (type === "callSignal") {
+          const parsed = wsEvents.send.callSignal.parse(payload);
+          socket.to(currentRoomId).emit("signal", {
+            type: "callSignal",
+            payload: {
+              encryptedPayload: parsed.encryptedPayload,
+              iv: parsed.iv,
+              timestamp: Date.now(),
+            },
+          });
+          return;
+        }
+
+        if (type === "leave") {
+          socket.leave(currentRoomId);
+          leaveIoRoom(socket.id, currentRoomId);
+          currentRoomId = null;
+        }
+      } catch {
+        socket.emit("signal", {
+          type: "error",
+          payload: { message: "Invalid message format" },
+        });
+      }
+    });
+
+    socket.on("disconnect", () => {
+      leaveIoRoom(socket.id, currentRoomId);
+      ioRateState.delete(socket.id);
+      currentRoomId = null;
+    });
   });
 
   const wss = new WebSocketServer({
