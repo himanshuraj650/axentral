@@ -66,18 +66,28 @@ export async function registerRoutes(
   });
 
   app.get(api.turn.credentials.path, async (_req, res) => {
+    const hardcodedFallbackTurnUrls = [
+      "turn:global.relay.metered.ca:80",
+      "turn:global.relay.metered.ca:80?transport=tcp",
+      "turn:global.relay.metered.ca:443",
+      "turns:global.relay.metered.ca:443?transport=tcp",
+    ];
+    const hardcodedFallbackTurnUsername = "16a4e8bb6e29530708bfaf64";
+    const hardcodedFallbackTurnCredential = "D5ziBUVmttXhuuai";
+
     const staticTurnUrls = (process.env.TURN_URLS || "")
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const staticTurnUsername = process.env.TURN_USERNAME;
-    const staticTurnCredential = process.env.TURN_CREDENTIAL;
+    const effectiveStaticTurnUrls = staticTurnUrls.length > 0 ? staticTurnUrls : hardcodedFallbackTurnUrls;
+    const staticTurnUsername = process.env.TURN_USERNAME || hardcodedFallbackTurnUsername;
+    const staticTurnCredential = process.env.TURN_CREDENTIAL || hardcodedFallbackTurnCredential;
 
-    if (staticTurnUrls.length > 0 && staticTurnUsername && staticTurnCredential) {
+    if (effectiveStaticTurnUrls.length > 0 && staticTurnUsername && staticTurnCredential) {
       return res.status(200).json({
         iceServers: [
           {
-            urls: staticTurnUrls,
+            urls: effectiveStaticTurnUrls,
             username: staticTurnUsername,
             credential: staticTurnCredential,
           },
