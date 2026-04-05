@@ -189,6 +189,7 @@ export function useChat(roomId: string) {
   const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const pendingEncryptedMessagesRef = useRef<Array<{ encryptedPayload: string; iv: string; timestamp: number }>>([]);
   const pendingEncryptedCallSignalsRef = useRef<Array<{ encryptedPayload: string; iv: string }>>([]);
   const callStateRef = useRef<CallState>(callState);
   const outgoingCallTimeoutRef = useRef<number | null>(null);
@@ -720,6 +721,40 @@ export function useChat(roomId: string) {
     return "Could not access microphone/camera.";
   };
 
+  const handleEncryptedMessagePayload = useCallback(async (data: {
+    encryptedPayload: string;
+    iv: string;
+    timestamp: number;
+  }) => {
+    if (!sharedSecretRef.current) {
+      pendingEncryptedMessagesRef.current.push(data);
+      return;
+    }
+
+    const decryptedJson = await decryptMessage(
+      data.encryptedPayload,
+      data.iv,
+      sharedSecretRef.current
+    );
+
+    const innerPayload = JSON.parse(decryptedJson);
+
+    const expiresAt = innerPayload.destructTimer
+      ? Date.now() + innerPayload.destructTimer * 1000
+      : null;
+
+    const newMessage: ChatMessage = {
+      id: `${data.timestamp}-${Math.random().toString(36).substring(7)}`,
+      text: innerPayload.text,
+      image: innerPayload.image,
+      isMine: false,
+      timestamp: data.timestamp,
+      expiresAt,
+    };
+
+    setMessages((prev) => [...prev, newMessage]);
+  }, []);
+
   const handleCallSignal = useCallback(async (signal: SignalPayload) => {
     if (signal.kind === "call-offer") {
       if (
@@ -967,6 +1002,19 @@ export function useChat(roomId: string) {
 
               setConnectionState("secured");
 
+              if (pendingEncryptedMessagesRef.current.length > 0) {
+                const queuedMessages = [...pendingEncryptedMessagesRef.current];
+                pendingEncryptedMessagesRef.current = [];
+
+                for (const queuedMessage of queuedMessages) {
+                  try {
+                    await handleEncryptedMessagePayload(queuedMessage);
+                  } catch {
+                    // Ignore malformed queued messages.
+                  }
+                }
+              }
+
               if (pendingEncryptedCallSignalsRef.current.length > 0) {
                 const queuedSignals = [...pendingEncryptedCallSignalsRef.current];
                 pendingEncryptedCallSignalsRef.current = [];
@@ -991,33 +1039,7 @@ export function useChat(roomId: string) {
 
           else if (parsed.type === "message") {
             const data = wsEvents.receive.message.parse(parsed.payload);
-
-            if (!sharedSecretRef.current) return;
-
-            const decryptedJson = await decryptMessage(
-              data.encryptedPayload,
-              data.iv,
-              sharedSecretRef.current
-            );
-
-            const innerPayload = JSON.parse(decryptedJson);
-
-            const expiresAt = innerPayload.destructTimer
-              ? Date.now() + innerPayload.destructTimer * 1000
-              : null;
-
-            const newMessage: ChatMessage = {
-              id: `${data.timestamp}-${Math.random()
-                .toString(36)
-                .substring(7)}`,
-              text: innerPayload.text,
-              image: innerPayload.image,
-              isMine: false,
-              timestamp: data.timestamp,
-              expiresAt,
-            };
-
-            setMessages((prev) => [...prev, newMessage]);
+            await handleEncryptedMessagePayload(data);
           }
 
           else if (parsed.type === "typing") {
@@ -1080,7 +1102,7 @@ export function useChat(roomId: string) {
       setConnectionState("error");
       setErrorMsg("Failed to initialize encryption");
     }
-  }, [cleanupCall, handleCallSignal, roomId]);
+  }, [cleanupCall, handleCallSignal, handleEncryptedMessagePayload, roomId]);
 
   useEffect(() => {
     connect();
