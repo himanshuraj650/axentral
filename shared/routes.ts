@@ -15,6 +15,25 @@ export const errorSchemas = {
 };
 
 export const api = {
+  turn: {
+    credentials: {
+      method: 'GET' as const,
+      path: '/api/turn/credentials' as const,
+      responses: {
+        200: z.object({
+          iceServers: z.array(
+            z.object({
+              urls: z.union([z.string(), z.array(z.string())]),
+              username: z.string().optional(),
+              credential: z.string().optional(),
+            })
+          ),
+          expiresAt: z.number(),
+        }),
+        404: errorSchemas.notFound,
+      },
+    },
+  },
   security: {
     mode: {
       method: 'GET' as const,

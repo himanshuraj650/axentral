@@ -125,6 +125,9 @@ export function useChat(roomId: string) {
   const disconnectTimeoutRef = useRef<number | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
   const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
+  const dynamicIceServersRef = useRef<RTCIceServer[] | null>(null);
+  const dynamicIceServersExpiresAtRef = useRef<number>(0);
+  const hasActiveTurnRef = useRef<boolean>(false);
   const callMetaRef = useRef<{
     direction: CallDirection;
     callType: CallType;
@@ -153,7 +156,7 @@ export function useChat(roomId: string) {
       ? "relay"
       : "all";
 
-  const iceServers: RTCIceServer[] = [
+  const defaultIceServers: RTCIceServer[] = [
     {
       urls: [
         "stun:stun.l.google.com:19302",
@@ -174,13 +177,54 @@ export function useChat(roomId: string) {
     console.warn("TURN URLs provided but missing VITE_TURN_USERNAME or VITE_TURN_CREDENTIAL. Using STUN only.");
   }
 
-  if (hasUsableTurn) {
-    iceServers.push({
-      urls: turnUrls,
-      username: env.VITE_TURN_USERNAME,
-      credential: env.VITE_TURN_CREDENTIAL,
-    });
-  }
+  const staticTurnIceServer: RTCIceServer | null = hasUsableTurn
+    ? {
+        urls: turnUrls,
+        username: env.VITE_TURN_USERNAME,
+        credential: env.VITE_TURN_CREDENTIAL,
+      }
+    : null;
+
+  const serverHasTurnUrl = (server: RTCIceServer) => {
+    const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
+    return urls.some((url) => typeof url === "string" && (url.startsWith("turn:") || url.startsWith("turns:")));
+  };
+
+  const resolveIceServers = useCallback(async (): Promise<RTCIceServer[]> => {
+    if (staticTurnIceServer) {
+      hasActiveTurnRef.current = true;
+      return [...defaultIceServers, staticTurnIceServer];
+    }
+
+    const now = Date.now();
+    if (
+      dynamicIceServersRef.current &&
+      dynamicIceServersExpiresAtRef.current > now + 15_000
+    ) {
+      hasActiveTurnRef.current = dynamicIceServersRef.current.some(serverHasTurnUrl);
+      return dynamicIceServersRef.current;
+    }
+
+    try {
+      const res = await fetch(api.turn.credentials.path);
+      if (res.ok) {
+        const parsed = api.turn.credentials.responses[200].parse(await res.json());
+        const fetched = parsed.iceServers as RTCIceServer[];
+        if (fetched.length > 0) {
+          const next = [...defaultIceServers, ...fetched];
+          dynamicIceServersRef.current = next;
+          dynamicIceServersExpiresAtRef.current = parsed.expiresAt;
+          hasActiveTurnRef.current = fetched.some(serverHasTurnUrl);
+          return next;
+        }
+      }
+    } catch {
+      // Fallback to STUN only when TURN provider is unavailable.
+    }
+
+    hasActiveTurnRef.current = false;
+    return defaultIceServers;
+  }, [defaultIceServers, staticTurnIceServer]);
 
   useEffect(() => {
     callStateRef.current = callState;
@@ -441,11 +485,13 @@ export function useChat(roomId: string) {
     [roomId]
   );
 
-  const createPeerConnection = useCallback(() => {
+  const createPeerConnection = useCallback(async () => {
     pendingIceCandidatesRef.current = [];
 
+    const resolvedIceServers = await resolveIceServers();
+
     const pc = new RTCPeerConnection({
-      iceServers,
+      iceServers: resolvedIceServers,
       iceTransportPolicy,
       iceCandidatePoolSize: 8,
     });
@@ -523,7 +569,7 @@ export function useChat(roomId: string) {
             const currentState = pc.connectionState;
             if (currentState === "disconnected") {
               appendCallLog("failed");
-              const callDropMessage = !hasUsableTurn
+              const callDropMessage = !hasActiveTurnRef.current
                 ? "Call connection lost. Add TURN server config for cross-network device support."
                 : "Call connection lost.";
               cleanupCall(true, callDropMessage);
@@ -539,7 +585,7 @@ export function useChat(roomId: string) {
         }
 
         appendCallLog("failed");
-        const callDropMessage = !hasUsableTurn
+        const callDropMessage = !hasActiveTurnRef.current
           ? "Call connection lost. Add TURN server config for cross-network device support."
           : "Call connection lost.";
         cleanupCall(true, callDropMessage);
@@ -565,7 +611,7 @@ export function useChat(roomId: string) {
 
     pcRef.current = pc;
     return pc;
-  }, [appendCallLog, cleanupCall, hasUsableTurn, iceServers, iceTransportPolicy, sendEncryptedCallSignal]);
+  }, [appendCallLog, cleanupCall, iceTransportPolicy, resolveIceServers, sendEncryptedCallSignal]);
 
   const getMediaErrorMessage = (error: unknown) => {
     if (!(error instanceof DOMException)) {
@@ -1035,7 +1081,7 @@ export function useChat(roomId: string) {
         durationSec: 0,
       }));
 
-      const pc = createPeerConnection();
+      const pc = await createPeerConnection();
 
       localStream.getTracks().forEach((track) => {
         pc.addTrack(track, localStream);
@@ -1103,7 +1149,7 @@ export function useChat(roomId: string) {
         callMetaRef.current.answeredAt = Date.now();
       }
 
-      const pc = createPeerConnection();
+      const pc = await createPeerConnection();
 
       localStream.getTracks().forEach((track) => {
         pc.addTrack(track, localStream);

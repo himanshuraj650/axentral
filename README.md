@@ -53,7 +53,15 @@ Deployment steps:
 4. Keep `ALLOW_PERSISTENT_ROOM_STORAGE=true` if you want rooms stored in Postgres.
 5. Set TURN variables in Render for reliable voice/video calling across networks.
 
-Recommended Render environment variables (authenticated TURN):
+Recommended Render environment variables (Twilio token-based TURN):
+```env
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_TTL_SEC=3600
+VITE_ICE_TRANSPORT_POLICY=relay
+```
+
+Optional static TURN override (non-Twilio providers):
 ```env
 VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
 VITE_TURN_USERNAME=your-turn-username
@@ -65,7 +73,19 @@ If you do not configure TURN, calls may still work on the same network, but cros
 ## WebRTC Calling Setup
 For reliable voice/video calls across mobile networks and strict NATs, configure a TURN server.
 
-Use an authenticated TURN provider (or your own coturn) and add these variables:
+### Option 1: Twilio Network Traversal (recommended)
+1. Choose a Twilio plan (trial is fine for testing).
+2. Get `Account SID` and `Auth Token` from Twilio Console.
+3. Add these variables in Render:
+```env
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_TTL_SEC=3600
+VITE_ICE_TRANSPORT_POLICY=relay
+```
+
+### Option 2: Any authenticated TURN provider
+Add these variables to your `.env` file:
 ```env
 VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
 VITE_TURN_USERNAME=your-turn-username

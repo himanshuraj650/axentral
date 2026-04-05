@@ -64,6 +64,64 @@ export async function registerRoutes(
     });
   });
 
+  app.get(api.turn.credentials.path, async (_req, res) => {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const ttlSec = Math.max(300, Number(process.env.TWILIO_TTL_SEC || 3600));
+
+    if (!accountSid || !authToken) {
+      return res.status(404).json({
+        message: "TURN provider is not configured",
+      });
+    }
+
+    try {
+      const tokenUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Tokens.json`;
+      const body = new URLSearchParams({ Ttl: String(ttlSec) });
+      const authHeader = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+
+      const twilioRes = await fetch(tokenUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${authHeader}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body,
+      });
+
+      if (!twilioRes.ok) {
+        return res.status(502).json({
+          message: "Failed to fetch TURN credentials",
+        });
+      }
+
+      const twilioData = await twilioRes.json() as {
+        ice_servers?: Array<{
+          urls: string | string[];
+          username?: string;
+          credential?: string;
+        }>;
+      };
+
+      const iceServers = (twilioData.ice_servers || [])
+        .filter((server) => !!server?.urls)
+        .map((server) => ({
+          urls: server.urls,
+          username: server.username,
+          credential: server.credential,
+        }));
+
+      return res.status(200).json({
+        iceServers,
+        expiresAt: Date.now() + ttlSec * 1000,
+      });
+    } catch {
+      return res.status(502).json({
+        message: "TURN provider request failed",
+      });
+    }
+  });
+
   const presenceMap = new Map<string, {
     userId: string;
     displayName: string;
