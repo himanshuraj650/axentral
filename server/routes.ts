@@ -688,6 +688,35 @@ export async function registerRoutes(
           return;
         }
 
+        if (type === "callSignalPlain") {
+          const signal = payload?.signal;
+          const kind = signal?.kind;
+
+          if (
+            !signal ||
+            (kind !== "call-offer" &&
+              kind !== "call-answer" &&
+              kind !== "ice-candidate" &&
+              kind !== "call-end" &&
+              kind !== "call-reject")
+          ) {
+            socket.emit("signal", {
+              type: "error",
+              payload: { message: "Invalid call signal" },
+            });
+            return;
+          }
+
+          socket.to(currentRoomId).emit("signal", {
+            type: "callSignalPlain",
+            payload: {
+              signal,
+              timestamp: Date.now(),
+            },
+          });
+          return;
+        }
+
         if (type === "leave") {
           socket.leave(currentRoomId);
           leaveIoRoom(socket.id, currentRoomId);

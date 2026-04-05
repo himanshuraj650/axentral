@@ -533,22 +533,15 @@ export function useChat(roomId: string) {
     async (signal: SignalPayload) => {
       if (
         !wsRef.current ||
-        !sharedSecretRef.current ||
         wsRef.current.readyState !== WS_READY_STATE.OPEN
       ) {
         return false;
       }
 
-      const payload = JSON.stringify(signal);
-      const { encryptedPayload, iv } = await encryptMessage(
-        payload,
-        sharedSecretRef.current
-      );
-
       wsRef.current.send(
         JSON.stringify({
-          type: "callSignal",
-          payload: { roomId, encryptedPayload, iv },
+          type: "callSignalPlain",
+          payload: { roomId, signal },
         })
       );
 
@@ -1048,6 +1041,14 @@ export function useChat(roomId: string) {
             );
 
             const signal = JSON.parse(decryptedSignal) as SignalPayload;
+            await handleCallSignal(signal);
+          }
+
+          else if (parsed.type === "callSignalPlain") {
+            const signal = parsed?.payload?.signal as SignalPayload | undefined;
+            if (!signal || typeof signal !== "object" || typeof (signal as any).kind !== "string") {
+              return;
+            }
             await handleCallSignal(signal);
           }
 
