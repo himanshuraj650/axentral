@@ -53,12 +53,22 @@ Deployment steps:
 4. Keep `ALLOW_PERSISTENT_ROOM_STORAGE=true` if you want rooms stored in Postgres.
 5. Set TURN variables in Render for reliable voice/video calling across networks.
 
-Recommended Render environment variables (Twilio token-based TURN):
+Recommended Render environment variables (Metered TURN):
+```env
+METERED_DOMAIN=yourappname.metered.live
+METERED_SECRET_KEY=your_metered_secret_key
+VITE_ICE_TRANSPORT_POLICY=relay
+```
+
+Security note:
+- Keep `METERED_SECRET_KEY` only on server-side env (Render Environment).
+- Never expose `METERED_SECRET_KEY` in frontend code or public repos.
+
+Optional Twilio token-based TURN:
 ```env
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=your_twilio_auth_token
 TWILIO_TTL_SEC=3600
-VITE_ICE_TRANSPORT_POLICY=relay
 ```
 
 Optional static TURN override (non-Twilio providers):
@@ -73,10 +83,18 @@ If you do not configure TURN, calls may still work on the same network, but cros
 ## WebRTC Calling Setup
 For reliable voice/video calls across mobile networks and strict NATs, configure a TURN server.
 
-### Option 1: Twilio Network Traversal (recommended)
-1. Choose a Twilio plan (trial is fine for testing).
-2. Get `Account SID` and `Auth Token` from Twilio Console.
+### Option 1: Metered TURN (recommended)
+1. Create account at Metered dashboard.
+2. Open Realtime/TURN section and copy `urls`, `username`, `credential`.
 3. Add these variables in Render:
+```env
+VITE_TURN_URLS=turn:your-metered-host:80?transport=tcp,turn:your-metered-host:80?transport=udp,turn:your-metered-host:443?transport=tcp,turns:your-metered-host:443?transport=tcp
+VITE_TURN_USERNAME=your_metered_username
+VITE_TURN_CREDENTIAL=your_metered_credential
+VITE_ICE_TRANSPORT_POLICY=relay
+```
+
+### Option 2: Twilio Network Traversal
 ```env
 TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 TWILIO_AUTH_TOKEN=your_twilio_auth_token
@@ -84,7 +102,7 @@ TWILIO_TTL_SEC=3600
 VITE_ICE_TRANSPORT_POLICY=relay
 ```
 
-### Option 2: Any authenticated TURN provider
+### Option 3: Any authenticated TURN provider
 Add these variables to your `.env` file:
 ```env
 VITE_TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349

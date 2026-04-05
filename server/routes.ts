@@ -66,9 +66,52 @@ export async function registerRoutes(
   });
 
   app.get(api.turn.credentials.path, async (_req, res) => {
+    const meteredDomainRaw = process.env.METERED_DOMAIN;
+    const meteredSecretKey = process.env.METERED_SECRET_KEY;
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     const ttlSec = Math.max(300, Number(process.env.TWILIO_TTL_SEC || 3600));
+
+    const meteredDomain = (meteredDomainRaw || "")
+      .trim()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
+
+    if (meteredDomain && meteredSecretKey) {
+      try {
+        const meteredUrl = `https://${meteredDomain}/api/v1/turn/credentials?apiKey=${encodeURIComponent(meteredSecretKey)}`;
+        const meteredRes = await fetch(meteredUrl);
+
+        if (!meteredRes.ok) {
+          return res.status(502).json({
+            message: "Failed to fetch TURN credentials",
+          });
+        }
+
+        const meteredIceServers = await meteredRes.json() as Array<{
+          urls: string | string[];
+          username?: string;
+          credential?: string;
+        }>;
+
+        const iceServers = (meteredIceServers || [])
+          .filter((server) => !!server?.urls)
+          .map((server) => ({
+            urls: server.urls,
+            username: server.username,
+            credential: server.credential,
+          }));
+
+        return res.status(200).json({
+          iceServers,
+          expiresAt: Date.now() + 10 * 60 * 1000,
+        });
+      } catch {
+        return res.status(502).json({
+          message: "TURN provider request failed",
+        });
+      }
+    }
 
     if (!accountSid || !authToken) {
       return res.status(404).json({
