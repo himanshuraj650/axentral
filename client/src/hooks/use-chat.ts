@@ -946,9 +946,7 @@ export function useChat(roomId: string) {
               if (pcRef.current) {
                 clearOutgoingCallTimeout();
 
-                await pcRef.current.setRemoteDescription(
-                  new RTCSessionDescription(signal.sdp)
-                );
+                  await pcRef.current.setRemoteDescription(signal.sdp);
 
                 await flushPendingIceCandidates(pcRef.current);
 
@@ -957,7 +955,7 @@ export function useChat(roomId: string) {
                   isCalling: false,
                   isInCall: true,
                   status: "active",
-                }));
+                   }));
               }
             }
 
@@ -1221,7 +1219,7 @@ export function useChat(roomId: string) {
         pc.addTrack(track, localStream);
       });
 
-      await pc.setRemoteDescription(new RTCSessionDescription(offer.sdp));
+        await pc.setRemoteDescription(offer.sdp);
       await flushPendingIceCandidates(pc);
 
       const answer = await pc.createAnswer();
