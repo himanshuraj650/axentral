@@ -915,7 +915,6 @@ export function useChat(roomId: string) {
         cleanupCall(false);
 
         wsRef.current.send(
-        pcRef.current.oniceconnectionstatechange = null;
           JSON.stringify({
             type: "leave",
             payload: { roomId },
