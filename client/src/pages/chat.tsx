@@ -27,6 +27,13 @@ import { useToast } from "@/hooks/use-toast";
 import { ChatInput } from "@/components/chat/chat-input";
 import { MessageBubble } from "@/components/chat/message-bubble";
 
+type SavedRoom = {
+  id: string;
+  lastUsedAt: number;
+};
+
+const SAVED_ROOMS_KEY = "axyntrel.savedRooms";
+
 export default function Chat() {
   const [, params] = useRoute("/room/:id");
   const roomId = params?.id || "";
@@ -57,6 +64,26 @@ export default function Chat() {
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
   const [copied, setCopied] = useState(false);
   const [showCallLogs, setShowCallLogs] = useState(false);
+
+  useEffect(() => {
+    const id = roomId.trim().toUpperCase();
+    if (!id) return;
+
+    try {
+      const raw = localStorage.getItem(SAVED_ROOMS_KEY);
+      const parsed = raw ? (JSON.parse(raw) as SavedRoom[]) : [];
+      const safe = Array.isArray(parsed) ? parsed : [];
+
+      const next = [
+        { id, lastUsedAt: Date.now() },
+        ...safe.filter((room) => room && typeof room.id === "string" && room.id !== id),
+      ].slice(0, 30);
+
+      localStorage.setItem(SAVED_ROOMS_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore storage failures in restricted browser contexts.
+    }
+  }, [roomId]);
 
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, "0");
