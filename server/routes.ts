@@ -103,17 +103,21 @@ export async function registerRoutes(
           });
         }
 
-        // If Metered fails, fallback to STUN-only (empty TURN)
-        console.warn(`Metered TURN failed (${meteredRes.status}), falling back to STUN-only`);
+        // If Metered fails, fallback to Google STUN (works on same network)
+        console.warn(`Metered TURN failed (${meteredRes.status}), falling back to Google STUN`);
         return res.status(200).json({
-          iceServers: [],
+          iceServers: [
+            { urls: ["stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] },
+          ],
           expiresAt: Date.now() + 10 * 60 * 1000,
         });
       } catch (err) {
-        console.warn("Metered TURN request failed, falling back to STUN-only", err);
-        // Return empty ICE servers so client falls back to STUN
+        console.warn("Metered TURN request failed, falling back to Google STUN", err);
+        // Return Google STUN servers for fallback
         return res.status(200).json({
-          iceServers: [],
+          iceServers: [
+            { urls: ["stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"] },
+          ],
           expiresAt: Date.now() + 10 * 60 * 1000,
         });
       }
