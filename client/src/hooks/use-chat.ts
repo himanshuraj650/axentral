@@ -1078,8 +1078,11 @@ export function useChat(roomId: string) {
 
       const ws = createSocketIoCompatSocket();
       wsRef.current = ws;
+      let hasConnectedOnce = false;
 
       ws.onopen = () => {
+        hasConnectedOnce = true;
+        setErrorMsg(null);
         setConnectionState("waiting_for_peer");
 
         clearHeartbeat();
@@ -1130,8 +1133,12 @@ export function useChat(roomId: string) {
       };
 
       ws.onerror = () => {
-        setConnectionState("error");
-        setErrorMsg("WebSocket connection failed");
+        if (hasConnectedOnce) {
+          setConnectionState((prev) => (prev === "secured" ? prev : "connecting"));
+          return;
+        }
+
+        setConnectionState("connecting");
       };
 
       ws.onmessage = async (event) => {
