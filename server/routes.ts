@@ -787,10 +787,11 @@ export async function registerRoutes(
             currentRoomId = null;
           }
         }
-      } catch {
-        socket.emit("signal", {
-          type: "error",
-          payload: { message: "Invalid message format" },
+      } catch (error) {
+        console.error("Socket.IO signal handling failed", {
+          socketId: socket.id,
+          roomId: currentRoomId,
+          error,
         });
       }
     });
