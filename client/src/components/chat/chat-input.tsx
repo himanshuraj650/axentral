@@ -77,12 +77,22 @@ export function ChatInput({
     }
 
     // --- Large file: use WebRTC data channel ---
-    if (file.size > 10 * 1024 * 1024 && (window as any).sendFileViaDataChannel) {
-      // Use the global function injected for demo/testing
-      (window as any).sendFileViaDataChannel(file);
-      onAttachmentError?.("Large file is being sent peer-to-peer. Progress will show in the chat.");
-      e.target.value = "";
-      return;
+    if (file.size > 10 * 1024 * 1024) {
+      try {
+        if ((window as any).sendFileViaDataChannel && (window as any).fileSendChannelRef?.current?.readyState === "open") {
+          console.log('[WebRTC] Sending file via data channel:', file.name, file.size);
+          (window as any).sendFileViaDataChannel(file);
+          onAttachmentError?.("Large file is being sent peer-to-peer. Progress will show in the chat.");
+          e.target.value = "";
+          return;
+        } else {
+          console.error('[WebRTC] Data channel not open. Falling back to old method.');
+          onAttachmentError?.("Peer-to-peer channel not available. Falling back to instant method.");
+        }
+      } catch (err) {
+        console.error('[WebRTC] Data channel send failed:', err);
+        onAttachmentError?.("Peer-to-peer file transfer failed. Falling back to instant method.");
+      }
     }
 
     const reader = new FileReader();
