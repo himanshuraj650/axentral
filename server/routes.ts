@@ -565,8 +565,7 @@ export async function registerRoutes(
 
     const roomClients = ioRoomsMap.get(roomId)!;
     roomClients.delete(socketId);
-
-    io.to(roomId).emit("signal", {
+    emitToIoRoom(roomId, {
       type: "userLeft",
       payload: { clientsCount: roomClients.size },
     });
@@ -584,6 +583,33 @@ export async function registerRoutes(
       if (!io.sockets.sockets.has(socketId)) {
         roomClients.delete(socketId);
       }
+    }
+
+    if (roomClients.size === 0) {
+      ioRoomsMap.delete(roomId);
+    }
+  };
+
+  const emitToIoRoom = (
+    roomId: string,
+    message: unknown,
+    options?: { excludeSocketId?: string }
+  ) => {
+    const roomClients = ioRoomsMap.get(roomId);
+    if (!roomClients) return;
+
+    for (const socketId of Array.from(roomClients)) {
+      if (options?.excludeSocketId && socketId === options.excludeSocketId) {
+        continue;
+      }
+
+      const targetSocket = io.sockets.sockets.get(socketId);
+      if (!targetSocket) {
+        roomClients.delete(socketId);
+        continue;
+      }
+
+      targetSocket.emit("signal", message);
     }
 
     if (roomClients.size === 0) {
@@ -621,10 +647,14 @@ export async function registerRoutes(
       const ownPublicKey = ioPublicKeys.get(socket.id);
       if (!ownPublicKey) return;
 
-      socket.to(roomId).emit("signal", {
-        type: "publicKey",
-        payload: { publicKey: ownPublicKey },
-      });
+      emitToIoRoom(
+        roomId,
+        {
+          type: "publicKey",
+          payload: { publicKey: ownPublicKey },
+        },
+        { excludeSocketId: socket.id }
+      );
     };
 
     socket.on("signal", async (rawMessage: any) => {
@@ -712,7 +742,7 @@ export async function registerRoutes(
           relayStoredPublicKeys(requestedRoomId);
           broadcastOwnPublicKey(requestedRoomId);
 
-          io.to(requestedRoomId).emit("signal", {
+          emitToIoRoom(requestedRoomId, {
             type: "userJoined",
             payload: { clientsCount: roomClients.size },
           });
@@ -731,10 +761,14 @@ export async function registerRoutes(
             return;
           }
 
-          socket.to(targetRoomId).emit("signal", {
-            type: "publicKey",
-            payload: { publicKey: parsed.data.publicKey },
-          });
+          emitToIoRoom(
+            targetRoomId,
+            {
+              type: "publicKey",
+              payload: { publicKey: parsed.data.publicKey },
+            },
+            { excludeSocketId: socket.id }
+          );
           return;
         }
 
@@ -745,14 +779,18 @@ export async function registerRoutes(
           if (!parsed.success) {
             return;
           }
-          socket.to(currentRoomId).emit("signal", {
-            type: "message",
-            payload: {
-              encryptedPayload: parsed.data.encryptedPayload,
-              iv: parsed.data.iv,
-              timestamp: Date.now(),
+          emitToIoRoom(
+            currentRoomId,
+            {
+              type: "message",
+              payload: {
+                encryptedPayload: parsed.data.encryptedPayload,
+                iv: parsed.data.iv,
+                timestamp: Date.now(),
+              },
             },
-          });
+            { excludeSocketId: socket.id }
+          );
           return;
         }
 
@@ -761,17 +799,21 @@ export async function registerRoutes(
           if (!parsed.success) {
             return;
           }
-          socket.to(currentRoomId).emit("signal", {
-            type: "messageChunk",
-            payload: {
-              messageId: parsed.data.messageId,
-              encryptedChunk: parsed.data.encryptedChunk,
-              iv: parsed.data.iv,
-              index: parsed.data.index,
-              total: parsed.data.total,
-              timestamp: parsed.data.timestamp,
+          emitToIoRoom(
+            currentRoomId,
+            {
+              type: "messageChunk",
+              payload: {
+                messageId: parsed.data.messageId,
+                encryptedChunk: parsed.data.encryptedChunk,
+                iv: parsed.data.iv,
+                index: parsed.data.index,
+                total: parsed.data.total,
+                timestamp: parsed.data.timestamp,
+              },
             },
-          });
+            { excludeSocketId: socket.id }
+          );
           return;
         }
 
@@ -780,10 +822,14 @@ export async function registerRoutes(
           if (!parsed.success) {
             return;
           }
-          socket.to(currentRoomId).emit("signal", {
-            type: "typing",
-            payload: { isTyping: parsed.data.isTyping },
-          });
+          emitToIoRoom(
+            currentRoomId,
+            {
+              type: "typing",
+              payload: { isTyping: parsed.data.isTyping },
+            },
+            { excludeSocketId: socket.id }
+          );
           return;
         }
 
@@ -792,14 +838,18 @@ export async function registerRoutes(
           if (!parsed.success) {
             return;
           }
-          socket.to(currentRoomId).emit("signal", {
-            type: "callSignal",
-            payload: {
-              encryptedPayload: parsed.data.encryptedPayload,
-              iv: parsed.data.iv,
-              timestamp: Date.now(),
+          emitToIoRoom(
+            currentRoomId,
+            {
+              type: "callSignal",
+              payload: {
+                encryptedPayload: parsed.data.encryptedPayload,
+                iv: parsed.data.iv,
+                timestamp: Date.now(),
+              },
             },
-          });
+            { excludeSocketId: socket.id }
+          );
           return;
         }
 
@@ -822,13 +872,17 @@ export async function registerRoutes(
             return;
           }
 
-          socket.to(currentRoomId).emit("signal", {
-            type: "callSignalPlain",
-            payload: {
-              signal,
-              timestamp: Date.now(),
+          emitToIoRoom(
+            currentRoomId,
+            {
+              type: "callSignalPlain",
+              payload: {
+                signal,
+                timestamp: Date.now(),
+              },
             },
-          });
+            { excludeSocketId: socket.id }
+          );
           return;
         }
 
