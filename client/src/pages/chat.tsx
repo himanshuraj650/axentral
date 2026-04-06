@@ -52,6 +52,7 @@ export default function Chat() {
     errorMsg,
     callState,
     callLogs,
+    canScreenShare,
     sendMessage,
     sendTypingStatus,
     startCall,
@@ -689,15 +690,24 @@ export default function Chat() {
                   {callState.cameraOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => void toggleScreenShare()}
-                  className="h-12 w-12 rounded-full bg-card/90 border border-border text-secondary-foreground flex items-center justify-center hover-elevate"
-                  aria-label={callState.isScreenSharing ? "Stop screen share" : "Start screen share"}
-                  title={callState.isScreenSharing ? "Stop screen share" : "Start screen share"}
-                >
-                  <MonitorUp className="w-5 h-5" />
-                </button>
+                {canScreenShare ? (
+                  <button
+                    type="button"
+                    onClick={() => void toggleScreenShare()}
+                    className="h-12 w-12 rounded-full bg-card/90 border border-border text-secondary-foreground flex items-center justify-center hover-elevate"
+                    aria-label={callState.isScreenSharing ? "Stop screen share" : "Start screen share"}
+                    title={callState.isScreenSharing ? "Stop screen share" : "Start screen share"}
+                  >
+                    <MonitorUp className="w-5 h-5" />
+                  </button>
+                ) : (
+                  <div
+                    className="hidden sm:inline-flex h-12 px-3 rounded-full border border-border/60 bg-card/70 text-[11px] text-muted-foreground items-center"
+                    title="Screen sharing works on supported desktop browsers"
+                  >
+                    Screen share unavailable here
+                  </div>
+                )}
 
                 <button
                   type="button"

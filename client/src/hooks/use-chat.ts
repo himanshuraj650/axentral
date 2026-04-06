@@ -169,6 +169,11 @@ function createCompatSocket(): CompatSocket {
 }
 
 export function useChat(roomId: string) {
+  const canScreenShare =
+    typeof navigator !== "undefined" &&
+    !!navigator.mediaDevices &&
+    typeof navigator.mediaDevices.getDisplayMedia === "function";
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("connecting");
@@ -1978,6 +1983,7 @@ export function useChat(roomId: string) {
     errorMsg,
     callState,
     callLogs,
+    canScreenShare,
     sendMessage,
     sendTypingStatus,
     startCall,
