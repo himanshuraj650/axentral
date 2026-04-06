@@ -575,6 +575,21 @@ export async function registerRoutes(
     }
   };
 
+  const pruneDisconnectedIoRoomClients = (roomId: string) => {
+    const roomClients = ioRoomsMap.get(roomId);
+    if (!roomClients) return;
+
+    for (const socketId of Array.from(roomClients)) {
+      if (!io.sockets.sockets.has(socketId)) {
+        roomClients.delete(socketId);
+      }
+    }
+
+    if (roomClients.size === 0) {
+      ioRoomsMap.delete(roomId);
+    }
+  };
+
   io.on("connection", (socket) => {
     let currentRoomId: string | null = null;
 
@@ -630,6 +645,7 @@ export async function registerRoutes(
             ioRoomsMap.set(requestedRoomId, new Set());
           }
 
+          pruneDisconnectedIoRoomClients(requestedRoomId);
           const roomClients = ioRoomsMap.get(requestedRoomId)!;
           if (!roomClients.has(socket.id) && roomClients.size >= 2) {
             socket.emit("signal", {
