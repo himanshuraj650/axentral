@@ -497,6 +497,18 @@ export default function Chat() {
             sendMessage({ image }, timer)
           }
 
+          onSendFile={(file, timer) =>
+            sendMessage({ file }, timer)
+          }
+
+          onAttachmentError={(message) =>
+            toast({
+              title: "Attachment failed",
+              description: message,
+              variant: "destructive",
+            })
+          }
+
           onTyping={sendTypingStatus}
 
           disabled={connectionState !== "secured"}

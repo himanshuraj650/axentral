@@ -15,6 +15,12 @@ export type ChatMessage = {
   id: string;
   text?: string;
   image?: string;
+  file?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  };
   isMine: boolean;
   timestamp: number;
   expiresAt: number | null;
@@ -747,6 +753,7 @@ export function useChat(roomId: string) {
       id: `${data.timestamp}-${Math.random().toString(36).substring(7)}`,
       text: innerPayload.text,
       image: innerPayload.image,
+      file: innerPayload.file,
       isMine: false,
       timestamp: data.timestamp,
       expiresAt,
@@ -1126,7 +1133,16 @@ export function useChat(roomId: string) {
   }, [cleanupCall, connect, roomId]);
 
   const sendMessage = async (
-    content: { text?: string; image?: string },
+    content: {
+      text?: string;
+      image?: string;
+      file?: {
+        name: string;
+        mimeType: string;
+        size: number;
+        dataUrl: string;
+      };
+    },
     destructTimer: number | null
   ) => {
     if (

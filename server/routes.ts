@@ -53,7 +53,10 @@ export async function registerRoutes(
   };
   const allowServerCallLogs = process.env.ALLOW_SERVER_CALL_LOGS === "true";
   const allowPersistentRoomStorage = process.env.ALLOW_PERSISTENT_ROOM_STORAGE === "true";
-  const WS_MAX_PAYLOAD_BYTES = 64 * 1024;
+  const WS_MAX_PAYLOAD_BYTES = Math.max(
+    256 * 1024,
+    Number(process.env.WS_MAX_PAYLOAD_BYTES || 2 * 1024 * 1024)
+  );
   const WS_RATE_WINDOW_MS = 10_000;
   const WS_RATE_MAX_MESSAGES = 120;
 
@@ -522,6 +525,7 @@ export async function registerRoutes(
 
   const io = new SocketIOServer(httpServer, {
     path: "/socket.io",
+    maxHttpBufferSize: WS_MAX_PAYLOAD_BYTES,
     cors: {
       origin: (origin, callback) => {
         if (isOriginAllowed(origin, undefined)) {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Flame, Clock } from "lucide-react";
+import { Flame, Clock, FileText, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/hooks/use-chat";
 
@@ -30,6 +30,12 @@ export function MessageBubble({ message, groupedWithPrev = false }: MessageBubbl
     hour: "2-digit",
     minute: "2-digit",
   });
+  const fileSizeLabel =
+    message.file && message.file.size >= 1024
+      ? `${(message.file.size / 1024).toFixed(1)} KB`
+      : message.file
+      ? `${message.file.size} B`
+      : "";
 
   return (
     <div
@@ -56,6 +62,24 @@ export function MessageBubble({ message, groupedWithPrev = false }: MessageBubbl
             className="rounded-md mb-2 max-w-full h-auto cursor-pointer hover:opacity-95 transition-opacity" 
             onClick={() => window.open(message.image, '_blank')}
           />
+        )}
+        {message.file && (
+          <a
+            href={message.file.dataUrl}
+            download={message.file.name}
+            target="_blank"
+            rel="noreferrer"
+            className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border/70 bg-background/55 px-3 py-2 hover:bg-background/70 transition-colors"
+          >
+            <div className="min-w-0 flex items-center gap-2">
+              <FileText className="w-4 h-4 shrink-0" />
+              <div className="min-w-0">
+                <div className="truncate text-xs font-medium">{message.file.name}</div>
+                <div className="text-[10px] opacity-70">{fileSizeLabel}</div>
+              </div>
+            </div>
+            <Download className="w-4 h-4 shrink-0 opacity-80" />
+          </a>
         )}
         {message.text && <div>{message.text}</div>}
 
