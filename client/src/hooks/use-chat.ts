@@ -1419,24 +1419,63 @@ export function useChat(roomId: string) {
   const incomingFileChunksRef = useRef<Uint8Array[]>([]);
   const incomingFileMetaRef = useRef<any>(null);
 
-  // Add a flag to disable file transfer if data channel fails
-  const [fileTransferEnabled, setFileTransferEnabled] = useState(true);
+  // Add a flag to track connection state
+  const [peerConnectionHealthy, setPeerConnectionHealthy] = useState(true);
 
-  // Enhanced error handling for data channel
+  // Enhanced error handling for data channel and peer connection
   function handleDataChannelError(e: any) {
     console.error('[WebRTC] Data channel error:', e);
     setFileTransferEnabled(false);
-    showToast({ title: 'File transfer disabled due to connection error. Text chat still works.', variant: 'destructive' });
+    setPeerConnectionHealthy(false);
+    showToast({ title: 'File transfer failed. Reconnecting...', variant: 'destructive' });
+    resetPeerConnection();
+  }
+
+  function handlePeerConnectionError(e: any) {
+    console.error('[WebRTC] Peer connection error:', e);
+    setPeerConnectionHealthy(false);
+    showToast({ title: 'Connection lost. Reconnecting...', variant: 'destructive' });
+    resetPeerConnection();
+  }
+
+  // Reset and reconnect peer connection and data channel
+  function resetPeerConnection() {
+    try {
+      if (pcRef.current) {
+        pcRef.current.close();
+        pcRef.current = null;
+      }
+      fileSendChannelRef.current = null;
+      fileReceiveChannelRef.current = null;
+      setTimeout(() => {
+        // You may want to trigger your connection setup logic here
+        window.location.reload(); // Simple recovery: reload page to reconnect
+      }, 1000);
+    } catch (err) {
+      console.error('[WebRTC] Failed to reset peer connection:', err);
+    }
   }
 
   // Setup data channel on offer/answer (symmetric for both peers)
   function setupFileDataChannel(pc: RTCPeerConnection, isInitiator: boolean) {
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+        handlePeerConnectionError(new Error('ICE connection failed/disconnected'));
+      }
+    };
     if (isInitiator) {
       const channel = pc.createDataChannel("file");
       fileSendChannelRef.current = channel;
       channel.binaryType = "arraybuffer";
-      channel.onopen = () => console.log("[WebRTC] File data channel open (initiator)");
-      channel.onclose = () => console.log("[WebRTC] File data channel closed (initiator)");
+      channel.onopen = () => {
+        console.log("[WebRTC] File data channel open (initiator)");
+        setFileTransferEnabled(true);
+        setPeerConnectionHealthy(true);
+      };
+      channel.onclose = () => {
+        console.log("[WebRTC] File data channel closed (initiator)");
+        setPeerConnectionHealthy(false);
+      };
       channel.onerror = handleDataChannelError;
       channel.onmessage = handleFileChunkReceived;
     }
@@ -1445,8 +1484,15 @@ export function useChat(roomId: string) {
         fileReceiveChannelRef.current = event.channel;
         event.channel.binaryType = "arraybuffer";
         event.channel.onmessage = handleFileChunkReceived;
-        event.channel.onopen = () => console.log("[WebRTC] File data channel open (receiver)");
-        event.channel.onclose = () => console.log("[WebRTC] File data channel closed (receiver)");
+        event.channel.onopen = () => {
+          console.log("[WebRTC] File data channel open (receiver)");
+          setFileTransferEnabled(true);
+          setPeerConnectionHealthy(true);
+        };
+        event.channel.onclose = () => {
+          console.log("[WebRTC] File data channel closed (receiver)");
+          setPeerConnectionHealthy(false);
+        };
         event.channel.onerror = handleDataChannelError;
       }
     };
@@ -1454,8 +1500,8 @@ export function useChat(roomId: string) {
 
   // Send file in chunks
   async function sendFileViaDataChannel(file: File) {
-    if (!fileTransferEnabled) {
-      showToast({ title: 'File transfer is currently disabled due to a previous error.', variant: 'destructive' });
+    if (!fileTransferEnabled || !peerConnectionHealthy) {
+      showToast({ title: 'File transfer is currently disabled or connection is unhealthy.', variant: 'destructive' });
       return;
     }
     const channel = fileSendChannelRef.current || fileReceiveChannelRef.current;
