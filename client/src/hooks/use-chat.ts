@@ -1419,6 +1419,16 @@ export function useChat(roomId: string) {
   const incomingFileChunksRef = useRef<Uint8Array[]>([]);
   const incomingFileMetaRef = useRef<any>(null);
 
+  // Add a flag to disable file transfer if data channel fails
+  const [fileTransferEnabled, setFileTransferEnabled] = useState(true);
+
+  // Enhanced error handling for data channel
+  function handleDataChannelError(e: any) {
+    console.error('[WebRTC] Data channel error:', e);
+    setFileTransferEnabled(false);
+    showToast({ title: 'File transfer disabled due to connection error. Text chat still works.', variant: 'destructive' });
+  }
+
   // Setup data channel on offer/answer (symmetric for both peers)
   function setupFileDataChannel(pc: RTCPeerConnection, isInitiator: boolean) {
     if (isInitiator) {
@@ -1427,7 +1437,7 @@ export function useChat(roomId: string) {
       channel.binaryType = "arraybuffer";
       channel.onopen = () => console.log("[WebRTC] File data channel open (initiator)");
       channel.onclose = () => console.log("[WebRTC] File data channel closed (initiator)");
-      channel.onerror = (e) => console.error("[WebRTC] File data channel error (initiator)", e);
+      channel.onerror = handleDataChannelError;
       channel.onmessage = handleFileChunkReceived;
     }
     pc.ondatachannel = (event) => {
@@ -1437,37 +1447,45 @@ export function useChat(roomId: string) {
         event.channel.onmessage = handleFileChunkReceived;
         event.channel.onopen = () => console.log("[WebRTC] File data channel open (receiver)");
         event.channel.onclose = () => console.log("[WebRTC] File data channel closed (receiver)");
-        event.channel.onerror = (e) => console.error("[WebRTC] File data channel error (receiver)", e);
+        event.channel.onerror = handleDataChannelError;
       }
     };
   }
 
   // Send file in chunks
   async function sendFileViaDataChannel(file: File) {
+    if (!fileTransferEnabled) {
+      showToast({ title: 'File transfer is currently disabled due to a previous error.', variant: 'destructive' });
+      return;
+    }
     const channel = fileSendChannelRef.current || fileReceiveChannelRef.current;
     if (!channel || channel.readyState !== "open") {
       showToast({ title: "File channel not open", variant: "destructive" });
       console.error('[WebRTC] File channel not open for sending');
       return;
     }
-    // Send metadata first
-    channel.send(JSON.stringify({
-      name: file.name,
-      size: file.size,
-      mimeType: file.type,
-      kind: "meta"
-    }));
-    // Send chunks
-    let offset = 0;
-    while (offset < file.size) {
-      const chunk = await file.slice(offset, offset + FILE_CHUNK_SIZE).arrayBuffer();
-      channel.send(chunk);
-      offset += FILE_CHUNK_SIZE;
+    try {
+      // Send metadata first
+      channel.send(JSON.stringify({
+        name: file.name,
+        size: file.size,
+        mimeType: file.type,
+        kind: "meta"
+      }));
+      // Send chunks
+      let offset = 0;
+      while (offset < file.size) {
+        const chunk = await file.slice(offset, offset + FILE_CHUNK_SIZE).arrayBuffer();
+        channel.send(chunk);
+        offset += FILE_CHUNK_SIZE;
+      }
+      // Send end marker
+      channel.send(JSON.stringify({ kind: "end" }));
+      showToast({ title: "File sent via data channel!" });
+      console.log('[WebRTC] File sent via data channel:', file.name, file.size);
+    } catch (err) {
+      handleDataChannelError(err);
     }
-    // Send end marker
-    channel.send(JSON.stringify({ kind: "end" }));
-    showToast({ title: "File sent via data channel!" });
-    console.log('[WebRTC] File sent via data channel:', file.name, file.size);
   }
 
   // Handle received file chunks
