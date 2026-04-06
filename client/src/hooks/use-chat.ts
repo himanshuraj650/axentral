@@ -779,6 +779,51 @@ export function useChat(roomId: string) {
     []
   );
 
+  const buildSwitchCameraConstraints = useCallback(
+    async (targetFacing: "user" | "environment", currentDeviceId?: string) => {
+      const fallback = {
+        facingMode: { exact: targetFacing },
+      } as MediaTrackConstraints;
+
+      if (!navigator.mediaDevices?.enumerateDevices) {
+        return fallback;
+      }
+
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter((device) => device.kind === "videoinput");
+
+        const matchingByLabel = videoInputs.find((device) => {
+          if (!device.deviceId || device.deviceId === currentDeviceId) {
+            return false;
+          }
+
+          const label = device.label.toLowerCase();
+          return targetFacing === "environment"
+            ? /back|rear|environment/.test(label)
+            : /front|user|facetime/.test(label);
+        });
+
+        if (matchingByLabel?.deviceId) {
+          return { deviceId: { exact: matchingByLabel.deviceId } } as MediaTrackConstraints;
+        }
+
+        const alternateDevice = videoInputs.find(
+          (device) => device.deviceId && device.deviceId !== currentDeviceId
+        );
+
+        if (alternateDevice?.deviceId) {
+          return { deviceId: { exact: alternateDevice.deviceId } } as MediaTrackConstraints;
+        }
+      } catch {
+        // Fall back to facingMode when device enumeration is unavailable or blocked.
+      }
+
+      return fallback;
+    },
+    []
+  );
+
   const handleEncryptedMessagePayload = useCallback(async (data: {
     encryptedPayload: string;
     iv: string;
@@ -1567,7 +1612,7 @@ export function useChat(roomId: string) {
 
       try {
         await currentVideoTrack.applyConstraints({
-          facingMode: nextFacing,
+          facingMode: { exact: nextFacing },
         } as MediaTrackConstraints);
 
         setCallState((prev) => ({
@@ -1578,11 +1623,19 @@ export function useChat(roomId: string) {
 
         return true;
       } catch {
+        const currentDeviceId = currentVideoTrack.getSettings().deviceId;
+        const nextVideoConstraints = await buildSwitchCameraConstraints(
+          nextFacing,
+          currentDeviceId
+        );
+
+        // Many mobile devices cannot open the second camera while the first is still active.
+        currentStream.removeTrack(currentVideoTrack);
+        currentVideoTrack.stop();
+
         const replacementStream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: {
-            facingMode: { ideal: nextFacing },
-          },
+          video: nextVideoConstraints,
         });
 
         const nextVideoTrack = replacementStream.getVideoTracks()[0];
@@ -1603,9 +1656,7 @@ export function useChat(roomId: string) {
 
         await sender.replaceTrack(nextVideoTrack);
 
-        currentStream.removeTrack(currentVideoTrack);
         currentStream.addTrack(nextVideoTrack);
-        currentVideoTrack.stop();
 
         localStreamRef.current = currentStream;
 
