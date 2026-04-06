@@ -1074,6 +1074,19 @@ export function useChat(roomId: string) {
       const ws = createSocketIoCompatSocket();
       wsRef.current = ws;
 
+      const sendMyPublicKey = () => {
+        if (ws.readyState !== WS_READY_STATE.OPEN || !myPublicKeyBase64Ref.current) {
+          return;
+        }
+
+        ws.send(
+          JSON.stringify({
+            type: "publicKey",
+            payload: { roomId, publicKey: myPublicKeyBase64Ref.current },
+          })
+        );
+      };
+
       ws.onopen = () => {
         setConnectionState("waiting_for_peer");
 
@@ -1087,13 +1100,6 @@ export function useChat(roomId: string) {
           JSON.stringify({
             type: "join",
             payload: { roomId },
-          })
-        );
-
-        ws.send(
-          JSON.stringify({
-            type: "publicKey",
-            payload: { roomId, publicKey: myPublicKeyBase64Ref.current },
           })
         );
       };
@@ -1130,19 +1136,16 @@ export function useChat(roomId: string) {
         try {
           const parsed = JSON.parse(event.data);
 
-          if (parsed.type === "userJoined") {
+          if (parsed.type === "joined") {
+            wsEvents.receive.joined.parse(parsed.payload);
+            sendMyPublicKey();
+          }
+
+          else if (parsed.type === "userJoined") {
             const data = wsEvents.receive.userJoined.parse(parsed.payload);
 
             if (data.clientsCount > 1) {
-              ws.send(
-                JSON.stringify({
-                  type: "publicKey",
-                  payload: {
-                    roomId,
-                    publicKey: myPublicKeyBase64Ref.current,
-                  },
-                })
-              );
+              sendMyPublicKey();
             }
           }
 

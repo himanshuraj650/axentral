@@ -544,6 +544,7 @@ export async function registerRoutes(
   });
 
   const ioRoomsMap = new Map<string, Set<string>>();
+  const ioPublicKeys = new Map<string, string>();
   const ioRateState = new Map<string, { count: number; windowStart: number }>();
 
   const isWithinIoRateLimit = (socketId: string) => {
@@ -592,6 +593,39 @@ export async function registerRoutes(
 
   io.on("connection", (socket) => {
     let currentRoomId: string | null = null;
+    let joiningRoomId: string | null = null;
+
+    const getTargetRoomId = (payloadRoomId?: string) =>
+      currentRoomId ||
+      joiningRoomId ||
+      (typeof payloadRoomId === "string" ? payloadRoomId.trim().toUpperCase() : null);
+
+    const relayStoredPublicKeys = (roomId: string) => {
+      const roomClients = ioRoomsMap.get(roomId);
+      if (!roomClients) return;
+
+      for (const socketId of Array.from(roomClients)) {
+        if (socketId === socket.id) continue;
+
+        const peerPublicKey = ioPublicKeys.get(socketId);
+        if (!peerPublicKey) continue;
+
+        socket.emit("signal", {
+          type: "publicKey",
+          payload: { publicKey: peerPublicKey },
+        });
+      }
+    };
+
+    const broadcastOwnPublicKey = (roomId: string) => {
+      const ownPublicKey = ioPublicKeys.get(socket.id);
+      if (!ownPublicKey) return;
+
+      socket.to(roomId).emit("signal", {
+        type: "publicKey",
+        payload: { publicKey: ownPublicKey },
+      });
+    };
 
     socket.on("signal", async (rawMessage: any) => {
       try {
@@ -633,9 +667,11 @@ export async function registerRoutes(
             return;
           }
           const requestedRoomId = parsed.data.roomId.trim().toUpperCase();
+          joiningRoomId = requestedRoomId;
           const existingRoom = await storage.getRoom(requestedRoomId);
 
           if (!existingRoom) {
+            joiningRoomId = null;
             socket.emit("signal", {
               type: "error",
               payload: { message: "Room does not exist" },
@@ -655,6 +691,7 @@ export async function registerRoutes(
           pruneDisconnectedIoRoomClients(requestedRoomId);
           const roomClients = ioRoomsMap.get(requestedRoomId)!;
           if (!roomClients.has(socket.id) && roomClients.size >= 2) {
+            joiningRoomId = null;
             socket.emit("signal", {
               type: "error",
               payload: { message: "Room is full" },
@@ -663,8 +700,17 @@ export async function registerRoutes(
           }
 
           currentRoomId = requestedRoomId;
+          joiningRoomId = null;
           roomClients.add(socket.id);
           socket.join(requestedRoomId);
+
+          socket.emit("signal", {
+            type: "joined",
+            payload: { roomId: requestedRoomId, clientsCount: roomClients.size },
+          });
+
+          relayStoredPublicKeys(requestedRoomId);
+          broadcastOwnPublicKey(requestedRoomId);
 
           io.to(requestedRoomId).emit("signal", {
             type: "userJoined",
@@ -673,19 +719,26 @@ export async function registerRoutes(
           return;
         }
 
-        if (!currentRoomId) return;
-
         if (type === "publicKey") {
           const parsed = wsEvents.send.publicKey.safeParse(payload);
           if (!parsed.success) {
             return;
           }
-          socket.to(currentRoomId).emit("signal", {
+          ioPublicKeys.set(socket.id, parsed.data.publicKey);
+
+          const targetRoomId = getTargetRoomId(parsed.data.roomId);
+          if (!targetRoomId) {
+            return;
+          }
+
+          socket.to(targetRoomId).emit("signal", {
             type: "publicKey",
             payload: { publicKey: parsed.data.publicKey },
           });
           return;
         }
+
+        if (!currentRoomId) return;
 
         if (type === "message") {
           const parsed = wsEvents.send.message.safeParse(payload);
@@ -784,6 +837,8 @@ export async function registerRoutes(
           if (parsed.success) {
             socket.leave(currentRoomId);
             leaveIoRoom(socket.id, currentRoomId);
+            ioPublicKeys.delete(socket.id);
+            joiningRoomId = null;
             currentRoomId = null;
           }
         }
@@ -798,7 +853,9 @@ export async function registerRoutes(
 
     socket.on("disconnect", () => {
       leaveIoRoom(socket.id, currentRoomId);
+      ioPublicKeys.delete(socket.id);
       ioRateState.delete(socket.id);
+      joiningRoomId = null;
       currentRoomId = null;
     });
   });
