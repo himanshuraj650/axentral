@@ -64,39 +64,48 @@ export function ChatInput({
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || disabled) {
       return;
     }
 
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      onAttachmentError?.("Attachment is too large. Max size is 1.2 MB.");
+      onAttachmentError?.("Attachment is too large. Max size is 100 MB.");
       e.target.value = "";
       return;
     }
 
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const dataUrl = reader.result as string;
+    // --- Large file: use WebRTC data channel ---
+    if (file.size > 10 * 1024 * 1024 && (window as any).sendFileViaDataChannel) {
+      // Use the global function injected for demo/testing
+      (window as any).sendFileViaDataChannel(file);
+      onAttachmentError?.("Large file is being sent peer-to-peer. Progress will show in the chat.");
+      e.target.value = "";
+      return;
+    }
 
-        if (file.type.startsWith("image/")) {
-          onSendImage(dataUrl, timer);
-        } else {
-          onSendFile(
-            {
-              name: file.name,
-              mimeType: file.type || "application/octet-stream",
-              size: file.size,
-              dataUrl,
-            },
-            timer
-          );
-        }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
 
-        e.target.value = "";
-      };
-      reader.readAsDataURL(file);
+      if (file.type.startsWith("image/")) {
+        onSendImage(dataUrl, timer);
+      } else {
+        onSendFile(
+          {
+            name: file.name,
+            mimeType: file.type || "application/octet-stream",
+            size: file.size,
+            dataUrl,
+          },
+          timer
+        );
+      }
+
+      e.target.value = "";
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

@@ -1407,6 +1407,107 @@ export function useChat(roomId: string) {
     setCallState((prev) => ({ ...prev, cameraOff: nextCameraOff }));
   };
 
+  // --- WebRTC Data Channel for Large File Transfer ---
+
+  // Constants for chunking
+  const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB
+  const FILE_CHUNK_SIZE = 64 * 1024; // 64KB per chunk
+
+  // Data channel refs
+  const fileSendChannelRef = useRef<RTCDataChannel | null>(null);
+  const fileReceiveChannelRef = useRef<RTCDataChannel | null>(null);
+  const incomingFileChunksRef = useRef<Uint8Array[]>([]);
+  const incomingFileMetaRef = useRef<any>(null);
+
+  // Setup data channel on offer/answer
+  function setupFileDataChannel(pc: RTCPeerConnection, isInitiator: boolean) {
+    if (isInitiator) {
+      const channel = pc.createDataChannel("file");
+      fileSendChannelRef.current = channel;
+      channel.binaryType = "arraybuffer";
+      channel.onopen = () => console.log("[WebRTC] File data channel open");
+      channel.onclose = () => console.log("[WebRTC] File data channel closed");
+      channel.onerror = (e) => console.error("[WebRTC] File data channel error", e);
+    } else {
+      pc.ondatachannel = (event) => {
+        if (event.channel.label === "file") {
+          fileReceiveChannelRef.current = event.channel;
+          event.channel.binaryType = "arraybuffer";
+          event.channel.onmessage = handleFileChunkReceived;
+          event.channel.onopen = () => console.log("[WebRTC] File data channel open");
+          event.channel.onclose = () => console.log("[WebRTC] File data channel closed");
+          event.channel.onerror = (e) => console.error("[WebRTC] File data channel error", e);
+        }
+      };
+    }
+  }
+
+  // Send file in chunks
+  async function sendFileViaDataChannel(file: File) {
+    if (!fileSendChannelRef.current || fileSendChannelRef.current.readyState !== "open") {
+      showToast({ title: "File channel not open", variant: "destructive" });
+      return;
+    }
+    // Send metadata first
+    fileSendChannelRef.current.send(JSON.stringify({
+      name: file.name,
+      size: file.size,
+      mimeType: file.type,
+      kind: "meta"
+    }));
+    // Send chunks
+    let offset = 0;
+    while (offset < file.size) {
+      const chunk = await file.slice(offset, offset + FILE_CHUNK_SIZE).arrayBuffer();
+      fileSendChannelRef.current.send(chunk);
+      offset += FILE_CHUNK_SIZE;
+    }
+    // Send end marker
+    fileSendChannelRef.current.send(JSON.stringify({ kind: "end" }));
+    showToast({ title: "File sent via data channel!" });
+  }
+
+  // Handle received file chunks
+  function handleFileChunkReceived(event: MessageEvent) {
+    if (typeof event.data === "string") {
+      const meta = JSON.parse(event.data);
+      if (meta.kind === "meta") {
+        incomingFileMetaRef.current = meta;
+        incomingFileChunksRef.current = [];
+        return;
+      }
+      if (meta.kind === "end") {
+        // Reassemble file
+        const meta = incomingFileMetaRef.current;
+        const blob = new Blob(incomingFileChunksRef.current, { type: meta.mimeType });
+        const url = URL.createObjectURL(blob);
+        // Add to chat as a file message
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-file` + Math.random().toString(36).substring(7),
+            file: {
+              name: meta.name,
+              mimeType: meta.mimeType,
+              size: meta.size,
+              dataUrl: url,
+            },
+            isMine: false,
+            timestamp: Date.now(),
+            expiresAt: null,
+          },
+        ]);
+        incomingFileChunksRef.current = [];
+        incomingFileMetaRef.current = null;
+        showToast({ title: "File received via data channel!" });
+        return;
+      }
+    } else {
+      // Binary chunk
+      incomingFileChunksRef.current.push(new Uint8Array(event.data));
+    }
+  }
+
   return {
     messages,
     connectionState,
