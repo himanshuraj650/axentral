@@ -545,6 +545,7 @@ export async function registerRoutes(
 
   const ioRoomsMap = new Map<string, Set<string>>();
   const ioRateState = new Map<string, { count: number; windowStart: number }>();
+  const ioPublicKeys = new Map<string, string>();
 
   const isWithinIoRateLimit = (socketId: string) => {
     const now = Date.now();
@@ -671,6 +672,18 @@ export async function registerRoutes(
             payload: { roomId: requestedRoomId, clientsCount: roomClients.size },
           });
 
+          for (const peerSocketId of Array.from(roomClients)) {
+            if (peerSocketId === socket.id) continue;
+
+            const peerPublicKey = ioPublicKeys.get(peerSocketId);
+            if (!peerPublicKey) continue;
+
+            socket.emit("signal", {
+              type: "publicKey",
+              payload: { publicKey: peerPublicKey },
+            });
+          }
+
           io.to(requestedRoomId).emit("signal", {
             type: "userJoined",
             payload: { clientsCount: roomClients.size },
@@ -685,6 +698,7 @@ export async function registerRoutes(
           if (!parsed.success) {
             return;
           }
+          ioPublicKeys.set(socket.id, parsed.data.publicKey);
           socket.to(currentRoomId).emit("signal", {
             type: "publicKey",
             payload: { publicKey: parsed.data.publicKey },
@@ -789,6 +803,7 @@ export async function registerRoutes(
           if (parsed.success) {
             socket.leave(currentRoomId);
             leaveIoRoom(socket.id, currentRoomId);
+            ioPublicKeys.delete(socket.id);
             currentRoomId = null;
           }
         }
@@ -804,6 +819,7 @@ export async function registerRoutes(
     socket.on("disconnect", () => {
       leaveIoRoom(socket.id, currentRoomId);
       ioRateState.delete(socket.id);
+      ioPublicKeys.delete(socket.id);
       currentRoomId = null;
     });
   });
