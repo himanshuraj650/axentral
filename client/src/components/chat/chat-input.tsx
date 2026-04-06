@@ -295,7 +295,7 @@ export function ChatInput({
 
   return (
     <div className="chat-input-container">
-      <div className="max-w-3xl mx-auto relative flex items-end gap-1.5 rounded-[1.05rem] p-2 frost-panel shine-border focus-within:ring-2 focus-within:ring-primary/35 transition-all duration-300 dark:bg-[#0b141a]/95 dark:border-[#1f2c33]">
+      <div className="max-w-3xl mx-auto relative rounded-[1.4rem] p-2.5 sm:p-2 frost-panel shine-border focus-within:ring-2 focus-within:ring-primary/35 transition-all duration-300 dark:bg-[#0b141a]/95 dark:border-[#1f2c33]">
         <input
           id="chat-image-upload"
           name="chatImageUpload"
@@ -306,97 +306,105 @@ export function ChatInput({
           onChange={handleAttachmentUpload}
         />
 
-        <Button
-          variant="ghost"
-          size="icon"
-          className="shrink-0 rounded-lg h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]"
-          disabled={disabled}
-          onClick={() => fileInputRef.current?.click()}
-          title="Share image"
-        >
-          <ImageIcon className="w-5 h-5" />
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-1.5">
+          <div className="flex items-end gap-2 sm:flex-1 sm:gap-1.5">
+            <div className="flex-1 rounded-2xl border border-border/60 bg-background/55 px-3 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] dark:bg-[#111b21] dark:border-[#23323d]">
+              <textarea
+                id="chat-message"
+                name="chatMessage"
+                ref={textareaRef}
+                value={text}
+                onChange={handleChange}
+                onKeyDown={handleKeyDown}
+                placeholder="Write something encrypted..."
+                disabled={disabled}
+                className="w-full max-h-[120px] min-h-[42px] bg-transparent border-0 focus:ring-0 resize-none py-2 px-0 text-[14px] sm:text-[15px] leading-5 placeholder:text-muted-foreground/60 font-sans disabled:opacity-50 scrollbar-hidden outline-none dark:text-[#e9edef] dark:placeholder:text-[#8696a0]"
+                rows={1}
+              />
+            </div>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          className="shrink-0 rounded-lg h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]"
-          disabled={disabled}
-          onClick={() => fileInputRef.current?.click()}
-          title="Share file"
-        >
-          <Paperclip className="w-5 h-5" />
-        </Button>
+            <Button
+              onClick={handleSend}
+              disabled={!text.trim() || disabled}
+              size="icon"
+              className="shrink-0 h-11 w-11 sm:h-9 sm:w-9 rounded-2xl sm:rounded-full bg-primary text-primary-foreground shadow-[0_10px_22px_hsl(var(--primary)/0.34)] hover:scale-[1.04] hover:brightness-95 transition-transform duration-200"
+            >
+              <Send className="w-4 h-4 ml-0.5" />
+            </Button>
+          </div>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn(
-            "shrink-0 rounded-lg h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]",
-            isRecordingVoice && "text-destructive hover:text-destructive bg-destructive/15"
-          )}
-          disabled={disabled}
-          onClick={isRecordingVoice ? stopVoiceRecording : startVoiceRecording}
-          title={isRecordingVoice ? "Stop recording" : "Record voice note"}
-        >
-          {isRecordingVoice ? <Square className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-        </Button>
+          <div className="flex items-center justify-between gap-1 rounded-2xl border border-border/60 bg-background/35 px-1.5 py-1.5 sm:border-0 sm:bg-transparent sm:p-0 dark:bg-[#0f171d]/80 sm:dark:bg-transparent dark:border-[#1d2b34]">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0 rounded-xl h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]"
+              disabled={disabled}
+              onClick={() => fileInputRef.current?.click()}
+              title="Share image"
+            >
+              <ImageIcon className="w-4.5 h-4.5" />
+            </Button>
 
-        <Popover>
-          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0 rounded-xl h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]"
+              disabled={disabled}
+              onClick={() => fileInputRef.current?.click()}
+              title="Share file"
+            >
+              <Paperclip className="w-4.5 h-4.5" />
+            </Button>
+
             <Button
               variant="ghost"
               size="icon"
               className={cn(
-                "shrink-0 rounded-lg h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]",
-                timer !== null && "text-destructive hover:text-destructive bg-destructive/15"
+                "shrink-0 rounded-xl h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]",
+                isRecordingVoice && "text-destructive hover:text-destructive bg-destructive/15"
               )}
               disabled={disabled}
-              title="Self-destruct timer"
+              onClick={isRecordingVoice ? stopVoiceRecording : startVoiceRecording}
+              title={isRecordingVoice ? "Stop recording" : "Record voice note"}
             >
-              <Timer className="w-5 h-5" />
+              {isRecordingVoice ? <Square className="w-4.5 h-4.5" /> : <Mic className="w-4.5 h-4.5" />}
             </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-48 p-2" align="start" side="top">
-            <div className="space-y-1">
-              <h4 className="text-xs font-mono font-bold text-muted-foreground px-2 py-1 uppercase tracking-wider">
-                Burn After Read
-              </h4>
-              {TIMER_OPTIONS.map((opt) => (
+
+            <Popover>
+              <PopoverTrigger asChild>
                 <Button
-                  key={opt.label}
-                  variant={timer === opt.value ? "secondary" : "ghost"}
-                  className="w-full justify-start text-sm"
-                  onClick={() => setTimer(opt.value)}
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "shrink-0 rounded-xl h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]",
+                    timer !== null && "text-destructive hover:text-destructive bg-destructive/15"
+                  )}
+                  disabled={disabled}
+                  title="Self-destruct timer"
                 >
-                  {opt.label}
+                  <Timer className="w-4.5 h-4.5" />
                 </Button>
-              ))}
-            </div>
-          </PopoverContent>
-        </Popover>
-
-        <textarea
-          id="chat-message"
-          name="chatMessage"
-          ref={textareaRef}
-          value={text}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Type an encrypted message..."
-          disabled={disabled}
-          className="flex-1 max-h-[120px] min-h-[38px] bg-transparent border-0 focus:ring-0 resize-none py-2 px-1.5 text-[14px] placeholder:text-muted-foreground/60 font-sans disabled:opacity-50 scrollbar-hidden outline-none dark:text-[#e9edef] dark:placeholder:text-[#8696a0]"
-          rows={1}
-        />
-
-        <Button
-          onClick={handleSend}
-          disabled={!text.trim() || disabled}
-          size="icon"
-          className="shrink-0 h-9 w-9 rounded-full bg-primary text-primary-foreground shadow-[0_8px_16px_hsl(var(--primary)/0.3)] hover:scale-[1.04] hover:brightness-95 transition-transform duration-200"
-        >
-          <Send className="w-4 h-4 ml-0.5" />
-        </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-48 p-2" align="start" side="top">
+                <div className="space-y-1">
+                  <h4 className="text-xs font-mono font-bold text-muted-foreground px-2 py-1 uppercase tracking-wider">
+                    Burn After Read
+                  </h4>
+                  {TIMER_OPTIONS.map((opt) => (
+                    <Button
+                      key={opt.label}
+                      variant={timer === opt.value ? "secondary" : "ghost"}
+                      className="w-full justify-start text-sm"
+                      onClick={() => setTimer(opt.value)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
       </div>
 
       {timer && (
