@@ -938,6 +938,7 @@ export async function registerRoutes(
   });
 
   const roomsMap = new Map<string, Set<WebSocket>>();
+  const wsPublicKeys = new WeakMap<WebSocket, string>();
   const wsRateState = new WeakMap<WebSocket, { count: number; windowStart: number }>();
 
   const isWithinWsRateLimit = (ws: WebSocket) => {
@@ -953,9 +954,61 @@ export async function registerRoutes(
     return state.count <= WS_RATE_MAX_MESSAGES;
   };
 
+  const emitToWsRoom = (
+    roomId: string,
+    message: unknown,
+    options?: { excludeClient?: WebSocket }
+  ) => {
+    const roomClients = roomsMap.get(roomId);
+    if (!roomClients) return;
+
+    const serialized = JSON.stringify(message);
+
+    for (const client of Array.from(roomClients)) {
+      if (options?.excludeClient && client === options.excludeClient) {
+        continue;
+      }
+
+      if (client.readyState !== WebSocket.OPEN) {
+        roomClients.delete(client);
+        continue;
+      }
+
+      client.send(serialized);
+    }
+
+    if (roomClients.size === 0) {
+      roomsMap.delete(roomId);
+    }
+  };
+
+  const relayStoredWsPublicKeys = (roomId: string, target: WebSocket) => {
+    const roomClients = roomsMap.get(roomId);
+    if (!roomClients) return;
+
+    for (const client of Array.from(roomClients)) {
+      if (client === target || client.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      const peerPublicKey = wsPublicKeys.get(client);
+      if (!peerPublicKey) {
+        continue;
+      }
+
+      target.send(
+        JSON.stringify({
+          type: "publicKey",
+          payload: { publicKey: peerPublicKey },
+        })
+      );
+    }
+  };
+
   wss.on("connection", (ws) => {
 
     let currentRoomId: string | null = null;
+    let joiningRoomId: string | null = null;
 
     ws.on("message", async (data) => {
 
@@ -998,12 +1051,20 @@ export async function registerRoutes(
         }
 
         if (type === "join") {
+          const parsed = wsEvents.send.join.safeParse(payload);
+          if (!parsed.success) {
+            ws.send(JSON.stringify({
+              type: "error",
+              payload: { message: "Invalid room join payload" },
+            }));
+            return;
+          }
 
-          const parsed = wsEvents.send.join.parse(payload);
-
-          const requestedRoomId = parsed.roomId.trim().toUpperCase();
+          const requestedRoomId = parsed.data.roomId.trim().toUpperCase();
+          joiningRoomId = requestedRoomId;
           const existingRoom = await storage.getRoom(requestedRoomId);
           if (!existingRoom) {
+            joiningRoomId = null;
             ws.send(JSON.stringify({
               type: "error",
               payload: { message: "Room does not exist" },
@@ -1012,6 +1073,7 @@ export async function registerRoutes(
           }
 
           currentRoomId = requestedRoomId;
+          joiningRoomId = null;
 
           if (!roomsMap.has(currentRoomId)) {
             roomsMap.set(currentRoomId, new Set());
@@ -1029,108 +1091,204 @@ export async function registerRoutes(
 
           roomClients.add(ws);
 
-          const joinMsg = JSON.stringify({
+          ws.send(JSON.stringify({
+            type: "joined",
+            payload: { roomId: currentRoomId, clientsCount: roomClients.size },
+          }));
+
+          relayStoredWsPublicKeys(currentRoomId, ws);
+
+          const ownPublicKey = wsPublicKeys.get(ws);
+          if (ownPublicKey) {
+            emitToWsRoom(
+              currentRoomId,
+              {
+                type: "publicKey",
+                payload: { publicKey: ownPublicKey },
+              },
+              { excludeClient: ws }
+            );
+          }
+
+          emitToWsRoom(currentRoomId, {
             type: "userJoined",
             payload: { clientsCount: roomClients.size },
           });
 
-          roomClients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
-              client.send(joinMsg);
-            }
-          });
-
         }
 
-        else if (type === "publicKey" && currentRoomId) {
+        else if (type === "publicKey") {
 
-          const parsed = wsEvents.send.publicKey.parse(payload);
+          const parsed = wsEvents.send.publicKey.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
 
-          const msg = JSON.stringify({
-            type: "publicKey",
-            payload: { publicKey: parsed.publicKey },
-          });
+          const targetRoomId =
+            currentRoomId ||
+            joiningRoomId ||
+            parsed.data.roomId.trim().toUpperCase();
+          if (!targetRoomId) {
+            return;
+          }
 
-          const roomClients = roomsMap.get(currentRoomId)!;
+          wsPublicKeys.set(ws, parsed.data.publicKey);
 
-          roomClients.forEach(client => {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(msg);
-            }
-          });
+          emitToWsRoom(
+            targetRoomId,
+            {
+              type: "publicKey",
+              payload: { publicKey: parsed.data.publicKey },
+            },
+            { excludeClient: ws }
+          );
 
         }
 
         else if (type === "message" && currentRoomId) {
 
-          const parsed = wsEvents.send.message.parse(payload);
+          const parsed = wsEvents.send.message.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
 
-          const msg = JSON.stringify({
-            type: "message",
-            payload: {
-              encryptedPayload: parsed.encryptedPayload,
-              iv: parsed.iv,
-              timestamp: Date.now(),
+          emitToWsRoom(
+            currentRoomId,
+            {
+              type: "message",
+              payload: {
+                encryptedPayload: parsed.data.encryptedPayload,
+                iv: parsed.data.iv,
+                timestamp: Date.now(),
+              },
             },
-          });
+            { excludeClient: ws }
+          );
 
-          const roomClients = roomsMap.get(currentRoomId)!;
+        }
 
-          roomClients.forEach(client => {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(msg);
-            }
-          });
+        else if (type === "messageChunk" && currentRoomId) {
+
+          const parsed = wsEvents.send.messageChunk.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
+
+          emitToWsRoom(
+            currentRoomId,
+            {
+              type: "messageChunk",
+              payload: {
+                messageId: parsed.data.messageId,
+                encryptedChunk: parsed.data.encryptedChunk,
+                iv: parsed.data.iv,
+                index: parsed.data.index,
+                total: parsed.data.total,
+                timestamp: parsed.data.timestamp,
+              },
+            },
+            { excludeClient: ws }
+          );
 
         }
 
         else if (type === "typing" && currentRoomId) {
 
-          const parsed = wsEvents.send.typing.parse(payload);
+          const parsed = wsEvents.send.typing.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
 
-          const msg = JSON.stringify({
-            type: "typing",
-            payload: { isTyping: parsed.isTyping },
-          });
-
-          const roomClients = roomsMap.get(currentRoomId)!;
-
-          roomClients.forEach(client => {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(msg);
-            }
-          });
+          emitToWsRoom(
+            currentRoomId,
+            {
+              type: "typing",
+              payload: { isTyping: parsed.data.isTyping },
+            },
+            { excludeClient: ws }
+          );
 
         }
 
         else if (type === "callSignal" && currentRoomId) {
 
-          const parsed = wsEvents.send.callSignal.parse(payload);
+          const parsed = wsEvents.send.callSignal.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
 
-          const roomClients = roomsMap.get(currentRoomId)!;
+          emitToWsRoom(
+            currentRoomId,
+            {
+              type: "callSignal",
+              payload: {
+                encryptedPayload: parsed.data.encryptedPayload,
+                iv: parsed.data.iv,
+                timestamp: Date.now(),
+              }
+            },
+            { excludeClient: ws }
+          );
 
-          const relayMsg = JSON.stringify({
-            type: "callSignal",
-            payload: {
-              encryptedPayload: parsed.encryptedPayload,
-              iv: parsed.iv,
-              timestamp: Date.now(),
-            }
+        }
+
+        else if (type === "callSignalPlain" && currentRoomId) {
+
+          const signal = payload?.signal;
+          const kind = signal?.kind;
+
+          if (
+            !signal ||
+            (kind !== "call-offer" &&
+              kind !== "call-answer" &&
+              kind !== "ice-candidate" &&
+              kind !== "call-end" &&
+              kind !== "call-reject")
+          ) {
+            ws.send(JSON.stringify({
+              type: "error",
+              payload: { message: "Invalid call signal" },
+            }));
+            return;
+          }
+
+          emitToWsRoom(
+            currentRoomId,
+            {
+              type: "callSignalPlain",
+              payload: {
+                signal,
+                timestamp: Date.now(),
+              }
+            },
+            { excludeClient: ws }
+          );
+
+        }
+
+        else if (type === "leave" && currentRoomId) {
+          const parsed = wsEvents.send.leave.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
+
+          const roomClients = roomsMap.get(currentRoomId);
+          roomClients?.delete(ws);
+          wsPublicKeys.delete(ws);
+          emitToWsRoom(currentRoomId, {
+            type: "userLeft",
+            payload: { clientsCount: roomClients?.size ?? 0 }
           });
-
-          roomClients.forEach(client => {
-            if (client !== ws && client.readyState === WebSocket.OPEN) {
-              client.send(relayMsg);
-            }
-          });
+          joiningRoomId = null;
+          currentRoomId = null;
 
         }
 
       } catch (err) {
-        ws.send(JSON.stringify({
-          type: "error",
-          payload: { message: "Invalid message format" }
-        }));
+        console.error("WebSocket signal handling failed", {
+          roomId: currentRoomId,
+          error: err,
+        });
 
       }
 
@@ -1143,16 +1301,12 @@ export async function registerRoutes(
         const roomClients = roomsMap.get(currentRoomId)!;
 
         roomClients.delete(ws);
+        wsPublicKeys.delete(ws);
+        joiningRoomId = null;
 
-        const leaveMsg = JSON.stringify({
+        emitToWsRoom(currentRoomId, {
           type: "userLeft",
           payload: { clientsCount: roomClients.size }
-        });
-
-        roomClients.forEach(client => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(leaveMsg);
-          }
         });
 
         if (roomClients.size === 0) {

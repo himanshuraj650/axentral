@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { io, type Socket } from "socket.io-client";
 import { api, buildUrl, wsEvents } from "@shared/routes";
 import { toast as showToast } from "@/hooks/use-toast";
 import {
@@ -113,14 +112,9 @@ const WS_READY_STATE = {
 const CHUNKED_MESSAGE_SIZE = 512 * 1024;
 const CHUNKED_MESSAGE_TTL_MS = 2 * 60 * 1000;
 
-function createSocketIoCompatSocket(): CompatSocket {
-  const socket: Socket = io({
-    path: "/socket.io",
-    transports: ["websocket", "polling"],
-    reconnection: true,
-    reconnectionAttempts: Infinity,
-    reconnectionDelay: 1000,
-  });
+function createCompatSocket(): CompatSocket {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const nativeSocket = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
   const compat: CompatSocket = {
     readyState: WS_READY_STATE.CONNECTING,
@@ -130,7 +124,7 @@ function createSocketIoCompatSocket(): CompatSocket {
     onmessage: null,
     send: (data: string) => {
       try {
-        socket.emit("signal", JSON.parse(data));
+        nativeSocket.send(data);
       } catch {
         compat.onerror?.();
       }
@@ -138,28 +132,27 @@ function createSocketIoCompatSocket(): CompatSocket {
     close: () => {
       if (compat.readyState === WS_READY_STATE.CLOSED) return;
       compat.readyState = WS_READY_STATE.CLOSING;
-      socket.disconnect();
-      compat.readyState = WS_READY_STATE.CLOSED;
+      nativeSocket.close();
     },
   };
 
-  socket.on("connect", () => {
+  nativeSocket.onopen = () => {
     compat.readyState = WS_READY_STATE.OPEN;
     compat.onopen?.();
-  });
+  };
 
-  socket.on("disconnect", () => {
+  nativeSocket.onclose = () => {
     compat.readyState = WS_READY_STATE.CLOSED;
     compat.onclose?.();
-  });
+  };
 
-  socket.on("connect_error", () => {
+  nativeSocket.onerror = () => {
     compat.onerror?.();
-  });
+  };
 
-  socket.on("signal", (message: unknown) => {
-    compat.onmessage?.({ data: JSON.stringify(message) });
-  });
+  nativeSocket.onmessage = (event) => {
+    compat.onmessage?.({ data: typeof event.data === "string" ? event.data : "" });
+  };
 
   return compat;
 }
@@ -1071,7 +1064,7 @@ export function useChat(roomId: string) {
 
       myPublicKeyBase64Ref.current = await exportPublicKey(keyPair.publicKey);
 
-      const ws = createSocketIoCompatSocket();
+      const ws = createCompatSocket();
       wsRef.current = ws;
 
       const sendMyPublicKey = () => {
