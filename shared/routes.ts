@@ -240,7 +240,6 @@ export const wsEvents = {
     leave: z.object({ roomId: z.string() })
   },
   receive: {
-    joined: z.object({ roomId: z.string(), clientsCount: z.number() }),
     userJoined: z.object({ clientsCount: z.number() }),
     publicKey: z.object({ publicKey: z.string() }),
     message: z.object({ encryptedPayload: z.string(), iv: z.string(), timestamp: z.number() }),

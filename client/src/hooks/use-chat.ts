@@ -116,7 +116,7 @@ const CHUNKED_MESSAGE_TTL_MS = 2 * 60 * 1000;
 function createSocketIoCompatSocket(): CompatSocket {
   const socket: Socket = io({
     path: "/socket.io",
-    transports: ["polling", "websocket"],
+    transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
@@ -148,11 +148,8 @@ function createSocketIoCompatSocket(): CompatSocket {
     compat.onopen?.();
   });
 
-  socket.on("disconnect", (reason) => {
-    compat.readyState =
-      reason === "io client disconnect"
-        ? WS_READY_STATE.CLOSED
-        : WS_READY_STATE.CONNECTING;
+  socket.on("disconnect", () => {
+    compat.readyState = WS_READY_STATE.CLOSED;
     compat.onclose?.();
   });
 
@@ -211,7 +208,6 @@ export function useChat(roomId: string) {
   const durationIntervalRef = useRef<number | null>(null);
   const disconnectTimeoutRef = useRef<number | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
-  const keyRetryIntervalRef = useRef<number | null>(null);
   const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
   const dynamicIceServersRef = useRef<RTCIceServer[] | null>(null);
   const dynamicIceServersExpiresAtRef = useRef<number>(0);
@@ -521,13 +517,6 @@ export function useChat(roomId: string) {
     }
   };
 
-  const clearKeyRetry = () => {
-    if (keyRetryIntervalRef.current) {
-      window.clearInterval(keyRetryIntervalRef.current);
-      keyRetryIntervalRef.current = null;
-    }
-  };
-
   const stopStream = (stream: MediaStream | null) => {
     stream?.getTracks().forEach((track) => track.stop());
   };
@@ -569,8 +558,6 @@ export function useChat(roomId: string) {
       clearOutgoingCallTimeout();
       clearIncomingAlert();
       clearDurationTicker();
-      clearKeyRetry();
-
       if (resetState) {
         resetCallState();
 
@@ -1069,7 +1056,6 @@ export function useChat(roomId: string) {
     if (wsRef.current) return;
 
     try {
-      intentionalDisconnectRef.current = false;
       if (!window.isSecureContext) {
         setConnectionState("error");
         setErrorMsg(
@@ -1087,15 +1073,11 @@ export function useChat(roomId: string) {
 
       const ws = createSocketIoCompatSocket();
       wsRef.current = ws;
-      let hasConnectedOnce = false;
 
       ws.onopen = () => {
-        hasConnectedOnce = true;
-        setErrorMsg(null);
         setConnectionState("waiting_for_peer");
 
         clearHeartbeat();
-        clearKeyRetry();
         heartbeatIntervalRef.current = window.setInterval(() => {
           if (ws.readyState !== WS_READY_STATE.OPEN) return;
           ws.send(JSON.stringify({ type: "ping", payload: { ts: Date.now() } }));
@@ -1108,34 +1090,20 @@ export function useChat(roomId: string) {
           })
         );
 
-        keyRetryIntervalRef.current = window.setInterval(() => {
-          if (
-            ws.readyState !== WS_READY_STATE.OPEN ||
-            !myPublicKeyBase64Ref.current ||
-            sharedSecretRef.current
-          ) {
-            return;
-          }
-
-          ws.send(
-            JSON.stringify({
-              type: "publicKey",
-              payload: { roomId, publicKey: myPublicKeyBase64Ref.current },
-            })
-          );
-        }, 3000);
+        ws.send(
+          JSON.stringify({
+            type: "publicKey",
+            payload: { roomId, publicKey: myPublicKeyBase64Ref.current },
+          })
+        );
       };
 
       ws.onclose = () => {
         clearHeartbeat();
-        clearKeyRetry();
         setConnectionState("disconnected");
         sharedSecretRef.current = null;
         setPeerIsTyping(false);
-
-        if (intentionalDisconnectRef.current) {
-          wsRef.current = null;
-        }
+        wsRef.current = null;
 
         const hasActiveOrPendingCall =
           callStateRef.current.isInCall ||
@@ -1154,33 +1122,15 @@ export function useChat(roomId: string) {
       };
 
       ws.onerror = () => {
-        if (hasConnectedOnce) {
-          setConnectionState((prev) => (prev === "secured" ? prev : "connecting"));
-          return;
-        }
-
-        setConnectionState("connecting");
+        setConnectionState("error");
+        setErrorMsg("WebSocket connection failed");
       };
 
       ws.onmessage = async (event) => {
         try {
           const parsed = JSON.parse(event.data);
 
-          if (parsed.type === "joined") {
-            const data = wsEvents.receive.joined.parse(parsed.payload);
-
-            ws.send(
-              JSON.stringify({
-                type: "publicKey",
-                payload: {
-                  roomId: data.roomId,
-                  publicKey: myPublicKeyBase64Ref.current,
-                },
-              })
-            );
-          }
-
-          else if (parsed.type === "userJoined") {
+          if (parsed.type === "userJoined") {
             const data = wsEvents.receive.userJoined.parse(parsed.payload);
 
             if (data.clientsCount > 1) {
@@ -1211,7 +1161,6 @@ export function useChat(roomId: string) {
               );
 
               sharedSecretRef.current = secret;
-              clearKeyRetry();
 
               setConnectionState("secured");
 
@@ -1327,10 +1276,8 @@ export function useChat(roomId: string) {
 
     return () => {
       clearHeartbeat();
-      clearKeyRetry();
 
       if (wsRef.current) {
-        intentionalDisconnectRef.current = true;
         cleanupCall(false);
 
         wsRef.current.send(
