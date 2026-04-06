@@ -1,24 +1,42 @@
 services:
   - type: web
     name: axyntrel
-    env: node
+    runtime: node
     plan: free
-    buildCommand: npm run db:push && npm run build
-    startCommand: npm run start
-    autoDeploy: true
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    autoDeployTrigger: commit
+    healthCheckPath: /
+    maxShutdownDelaySeconds: 60
     envVars:
       - key: NODE_ENV
         value: production
       - key: ALLOW_PERSISTENT_ROOM_STORAGE
-        value: "true"
+        value: "false"
       - key: ALLOW_SERVER_CALL_LOGS
         value: "false"
-      - fromDatabaseUrl:
-          type: postgres
-          property: connectionString
-        key: DATABASE_URL
-  - type: pserv
-    name: axyntrel-db
-    env: postgres
-    plan: free
-    # database is shared across services
+      - key: APP_ORIGINS
+        value: "*"
+      - key: VITE_ICE_TRANSPORT_POLICY
+        value: relay
+      - key: METERED_DOMAIN
+        value: axyntrel.metered.live
+      - key: METERED_API_KEY
+        sync: false
+      - key: TURN_URLS
+        value: turn:global.relay.metered.ca:80,turn:global.relay.metered.ca:80?transport=tcp,turn:global.relay.metered.ca:443,turns:global.relay.metered.ca:443?transport=tcp
+      - key: TURN_USERNAME
+        sync: false
+      - key: TURN_CREDENTIAL
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_API_KEY_SID
+        sync: false
+      - key: TWILIO_API_KEY_SECRET
+        sync: false
+      - key: TWILIO_TTL_SEC
+        value: "3600"
