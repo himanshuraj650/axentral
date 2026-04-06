@@ -18,6 +18,7 @@ import {
 type SavedRoom = {
   id: string;
   lastUsedAt: number;
+  displayName?: string;
 };
 
 type OnlineUser = {
@@ -78,6 +79,10 @@ export default function Home() {
         .map((room) => ({
           id: room.id.trim().toUpperCase(),
           lastUsedAt: room.lastUsedAt,
+          displayName:
+            typeof room.displayName === "string" && room.displayName.trim()
+              ? room.displayName.trim().slice(0, 32)
+              : undefined,
         }))
         .slice(0, 30);
 
@@ -208,13 +213,19 @@ export default function Home() {
     localStorage.setItem(SAVED_ROOMS_KEY, JSON.stringify(rooms));
   };
 
-  const rememberRoom = (roomId: string) => {
+  const rememberRoom = (roomId: string, displayName?: string) => {
     const id = roomId.trim().toUpperCase();
     if (!id) return;
 
     setSavedRooms((prev) => {
+      const existing = prev.find((room) => room.id === id);
+      const nextDisplayName =
+        typeof displayName === "string" && displayName.trim()
+          ? displayName.trim().slice(0, 32)
+          : existing?.displayName;
+
       const next = [
-        { id, lastUsedAt: Date.now() },
+        { id, lastUsedAt: Date.now(), displayName: nextDisplayName },
         ...prev.filter((room) => room.id !== id),
       ].slice(0, 30);
 
@@ -296,7 +307,8 @@ export default function Home() {
       if (!res.ok) return;
 
       const parsed = api.presence.connect.user.responses[200].parse(await res.json());
-      rememberRoom(parsed.roomId);
+      const peer = onlineUsers.find((user) => user.userId === targetUserId);
+      rememberRoom(parsed.roomId, peer?.displayName);
       setLocation(`/room/${parsed.roomId}`);
     } finally {
       setIsMatchmaking(false);
@@ -317,7 +329,8 @@ export default function Home() {
       if (!res.ok) return;
 
       const parsed = api.presence.connect.random.responses[200].parse(await res.json());
-      rememberRoom(parsed.roomId);
+      const peer = onlineUsers.find((user) => user.userId === parsed.matchedUserId);
+      rememberRoom(parsed.roomId, peer?.displayName);
       setLocation(`/room/${parsed.roomId}`);
     } finally {
       setIsMatchmaking(false);
@@ -333,7 +346,8 @@ export default function Home() {
     const res = await fetch(url, { method: api.presence.invites.accept.method });
     if (!res.ok) return;
 
-    rememberRoom(roomId);
+    const invite = invites.find((item) => item.roomId === roomId);
+    rememberRoom(roomId, invite?.fromDisplayName);
     setLocation(`/room/${roomId}`);
   };
 
@@ -869,6 +883,11 @@ export default function Home() {
                       onClick={() => openSavedRoom(room.id)}
                       className="min-w-0 text-left flex-1"
                     >
+                      {room.displayName && (
+                        <div className="text-sm font-semibold truncate text-foreground">
+                          {room.displayName}
+                        </div>
+                      )}
                       <div className="text-sm font-mono tracking-[0.12em] truncate text-foreground">{room.id}</div>
                       <div className="text-[11px] text-muted-foreground/90">
                         Last used {formatLastUsed(room.lastUsedAt)}
@@ -1002,6 +1021,11 @@ export default function Home() {
                       onClick={() => openSavedRoom(room.id)}
                       className="min-w-0 text-left"
                     >
+                      {room.displayName && (
+                        <div className="text-sm font-semibold truncate text-foreground">
+                          {room.displayName}
+                        </div>
+                      )}
                       <div className="text-sm font-mono tracking-[0.12em] text-foreground truncate">{room.id}</div>
                       <div className="text-[11px] text-muted-foreground">Last used {formatLastUsed(room.lastUsedAt)}</div>
                     </button>

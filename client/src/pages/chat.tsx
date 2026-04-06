@@ -30,6 +30,7 @@ import { MessageBubble } from "@/components/chat/message-bubble";
 type SavedRoom = {
   id: string;
   lastUsedAt: number;
+  displayName?: string;
 };
 
 const SAVED_ROOMS_KEY = "axyntrel.savedRooms";
@@ -73,9 +74,10 @@ export default function Chat() {
       const raw = localStorage.getItem(SAVED_ROOMS_KEY);
       const parsed = raw ? (JSON.parse(raw) as SavedRoom[]) : [];
       const safe = Array.isArray(parsed) ? parsed : [];
+      const existing = safe.find((room) => room && typeof room.id === "string" && room.id === id);
 
       const next = [
-        { id, lastUsedAt: Date.now() },
+        { id, lastUsedAt: Date.now(), displayName: existing?.displayName },
         ...safe.filter((room) => room && typeof room.id === "string" && room.id !== id),
       ].slice(0, 30);
 
