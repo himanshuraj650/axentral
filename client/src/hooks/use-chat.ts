@@ -246,7 +246,8 @@ export function useChat(roomId: string) {
   ];
 
   useEffect(() => {
-    setMessages([]);
+    // Only clear messages if joining a different room, not on every reconnect
+    // setMessages([]); // <-- Commented out to persist messages across reconnects
     setPeerIsTyping(false);
     setErrorMsg(null);
     setConnectionState("connecting");
