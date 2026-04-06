@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { useChat } from "@/hooks/use-chat";
+import { useRoom } from "@/hooks/use-rooms";
 import { useToast } from "@/hooks/use-toast";
 import { ChatInput } from "@/components/chat/chat-input";
 import { MessageBubble } from "@/components/chat/message-bubble";
@@ -38,6 +39,7 @@ const SAVED_ROOMS_KEY = "axyntrel.savedRooms";
 export default function Chat() {
   const [, params] = useRoute("/room/:id");
   const roomId = params?.id || "";
+  const { data: room } = useRoom(roomId || null);
 
   const { toast } = useToast();
 
@@ -77,7 +79,11 @@ export default function Chat() {
       const existing = safe.find((room) => room && typeof room.id === "string" && room.id === id);
 
       const next = [
-        { id, lastUsedAt: Date.now(), displayName: existing?.displayName },
+        {
+          id,
+          lastUsedAt: Date.now(),
+          displayName: room?.creatorDisplayName ?? existing?.displayName,
+        },
         ...safe.filter((room) => room && typeof room.id === "string" && room.id !== id),
       ].slice(0, 30);
 
@@ -85,7 +91,7 @@ export default function Chat() {
     } catch {
       // Ignore storage failures in restricted browser contexts.
     }
-  }, [roomId]);
+  }, [roomId, room?.creatorDisplayName]);
 
   const formatDuration = (seconds: number) => {
     const m = Math.floor(seconds / 60).toString().padStart(2, "0");

@@ -38,6 +38,7 @@ export class EphemeralStorage implements IStorage {
 
     const room: Room = {
       id: insertRoom.id,
+      creatorDisplayName: insertRoom.creatorDisplayName ?? null,
       createdAt: new Date(),
     };
 

@@ -213,6 +213,8 @@ export default function Home() {
     localStorage.setItem(SAVED_ROOMS_KEY, JSON.stringify(rooms));
   };
 
+  const currentDisplayName = displayName.trim().slice(0, 32);
+
   const rememberRoom = (roomId: string, displayName?: string) => {
     const id = roomId.trim().toUpperCase();
     if (!id) return;
@@ -236,29 +238,43 @@ export default function Home() {
 
   const ensureRoomExists = async (roomId: string) => {
     const id = roomId.trim().toUpperCase();
-    if (!id) return false;
+    if (!id) return null;
 
     try {
       const getUrl = buildUrl(api.rooms.get.path, { id });
       const getRes = await fetch(getUrl);
 
-      if (getRes.ok) return true;
+      if (getRes.ok) {
+        return api.rooms.get.responses[200].parse(await getRes.json());
+      }
 
       if (getRes.status === 404) {
         const createRes = await fetch(api.rooms.create.path, {
           method: api.rooms.create.method,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id }),
+          body: JSON.stringify({
+            id,
+            creatorDisplayName: currentDisplayName || undefined,
+          }),
         });
 
         // If another client created it in parallel, uniqueness conflict may occur.
         // In that case we can still proceed to join the same room id.
-        return createRes.ok || createRes.status === 409 || createRes.status === 400;
+        if (createRes.ok) {
+          return api.rooms.create.responses[201].parse(await createRes.json());
+        }
+
+        if (createRes.status === 409 || createRes.status === 400) {
+          const retryRes = await fetch(getUrl);
+          if (retryRes.ok) {
+            return api.rooms.get.responses[200].parse(await retryRes.json());
+          }
+        }
       }
 
-      return false;
+      return null;
     } catch {
-      return false;
+      return null;
     }
   };
 
@@ -266,8 +282,8 @@ export default function Home() {
     const id = roomId.trim().toUpperCase();
     if (!id) return;
 
-    rememberRoom(id);
-    await ensureRoomExists(id);
+    const room = await ensureRoomExists(id);
+    rememberRoom(id, room?.creatorDisplayName ?? currentDisplayName);
     setLocation(`/room/${id}`);
   };
 
@@ -284,7 +300,8 @@ export default function Home() {
     const id = roomId.trim().toUpperCase();
     if (!id) return;
 
-    rememberRoom(id);
+    const existing = savedRooms.find((room) => room.id === id);
+    rememberRoom(id, existing?.displayName);
     setLocation(`/room/${id}`);
     void ensureRoomExists(id);
     setSavedRoomsExpanded(false);
@@ -402,8 +419,10 @@ export default function Home() {
   const handleCreate = async () => {
     setIsCreatingRoom(true);
     try {
-      const room = await createRoom.mutateAsync(undefined);
-      rememberRoom(room.id);
+      const room = await createRoom.mutateAsync({
+        creatorDisplayName: currentDisplayName || undefined,
+      });
+      rememberRoom(room.id, room.creatorDisplayName ?? currentDisplayName);
       setLocation(`/room/${room.id}`);
     } catch (err) {
       console.error(err);
@@ -415,8 +434,10 @@ export default function Home() {
   const handleCreateQr = async () => {
     setIsCreatingQr(true);
     try {
-      const room = await createRoom.mutateAsync(undefined);
-      rememberRoom(room.id);
+      const room = await createRoom.mutateAsync({
+        creatorDisplayName: currentDisplayName || undefined,
+      });
+      rememberRoom(room.id, room.creatorDisplayName ?? currentDisplayName);
       setQrRoomId(room.id);
     } catch (err) {
       console.error(err);

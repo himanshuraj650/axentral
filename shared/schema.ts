@@ -6,6 +6,7 @@ import { z } from "zod";
 // No messages are stored in the database to guarantee anonymity and no central logging.
 export const rooms = pgTable("rooms", {
   id: text("id").primaryKey(),
+  creatorDisplayName: text("creator_display_name"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

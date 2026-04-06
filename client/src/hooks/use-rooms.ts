@@ -4,11 +4,11 @@ import { z } from "zod";
 
 export function useCreateRoom() {
   return useMutation({
-    mutationFn: async (id?: string) => {
+    mutationFn: async (input?: { id?: string; creatorDisplayName?: string }) => {
       const res = await fetch(api.rooms.create.path, {
         method: api.rooms.create.method,
         headers: { "Content-Type": "application/json" },
-        body: id ? JSON.stringify({ id }) : undefined,
+        body: input ? JSON.stringify(input) : undefined,
       });
       
       if (!res.ok) {

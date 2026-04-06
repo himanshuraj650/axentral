@@ -51,7 +51,10 @@ export const api = {
     create: {
       method: 'POST' as const,
       path: '/api/rooms' as const,
-      input: z.object({ id: z.string().optional() }).optional(),
+      input: z.object({
+        id: z.string().optional(),
+        creatorDisplayName: z.string().min(2).max(32).optional(),
+      }).optional(),
       responses: {
         201: z.custom<typeof rooms.$inferSelect>(),
         400: errorSchemas.validation,

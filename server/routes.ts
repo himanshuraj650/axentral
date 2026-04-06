@@ -260,12 +260,16 @@ export async function registerRoutes(
       const roomId =
         input.id?.trim().toUpperCase() ||
         Math.random().toString(36).substring(2, 12).toUpperCase();
+      const creatorDisplayName =
+        typeof input.creatorDisplayName === "string" && input.creatorDisplayName.trim()
+          ? input.creatorDisplayName.trim().slice(0, 32)
+          : undefined;
 
       if (!/^[A-Z0-9]{6,20}$/.test(roomId)) {
         return res.status(400).json({ message: "Room ID must be 6-20 chars (A-Z, 0-9).", field: "id" });
       }
 
-      const room = await storage.createRoom({ id: roomId });
+      const room = await storage.createRoom({ id: roomId, creatorDisplayName });
 
       res.status(201).json(room);
 
