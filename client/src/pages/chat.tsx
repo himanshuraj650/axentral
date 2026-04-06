@@ -123,6 +123,9 @@ export default function Chat() {
 
   }, [messages, peerIsTyping]);
 
+  const localVideoTrackCount = callState.localStream?.getVideoTracks().length ?? 0;
+  const remoteVideoTrackCount = callState.remoteStream?.getVideoTracks().length ?? 0;
+
   useEffect(() => {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = callState.remoteStream;
@@ -150,7 +153,14 @@ export default function Chat() {
         });
       }
     }
-  }, [callState.localStream, callState.remoteStream]);
+  }, [
+    callState.callType,
+    callState.localStream,
+    callState.remoteStream,
+    callState.isScreenSharing,
+    localVideoTrackCount,
+    remoteVideoTrackCount,
+  ]);
 
 
   /* COPY ROOM ID */
@@ -596,11 +606,17 @@ export default function Chat() {
             </div>
           </div>
 
+          {callState.error && (
+            <div className="mx-auto w-full max-w-4xl mb-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {callState.error}
+            </div>
+          )}
+
           <div className="mx-auto w-full max-w-4xl flex-1 relative rounded-2xl overflow-hidden lux-panel lux-frame">
 
             {callState.callType === "video" ? (
               <div className="w-full h-full bg-black relative">
-                {callState.remoteStream ? (
+                {callState.remoteStream?.getVideoTracks().length ? (
                   <video
                     ref={remoteVideoRef}
                     autoPlay
@@ -609,7 +625,7 @@ export default function Chat() {
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                    Waiting for peer video...
+                    {callState.remoteStream ? "Peer audio connected. Waiting for video..." : "Waiting for peer video..."}
                   </div>
                 )}
 
