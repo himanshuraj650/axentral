@@ -77,6 +77,7 @@ export type CallState = {
   localStream: MediaStream | null;
   micMuted: boolean;
   cameraOff: boolean;
+  cameraFacing: "user" | "environment";
   error: string | null;
   startedAt: number | null;
   durationSec: number;
@@ -183,6 +184,7 @@ export function useChat(roomId: string) {
     localStream: null,
     micMuted: false,
     cameraOff: false,
+    cameraFacing: "user",
     error: null,
     startedAt: null,
     durationSec: 0,
@@ -365,6 +367,7 @@ export function useChat(roomId: string) {
       localStream: null,
       micMuted: false,
       cameraOff: false,
+      cameraFacing: "user",
       error: null,
       startedAt: null,
       durationSec: 0,
@@ -760,6 +763,21 @@ export function useChat(roomId: string) {
 
     return "Could not access microphone/camera.";
   };
+
+  const acquireLocalStream = useCallback(
+    async (callType: CallType, facingMode: "user" | "environment" = "user") => {
+      return navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video:
+          callType === "video"
+            ? {
+                facingMode: { ideal: facingMode },
+              }
+            : false,
+      });
+    },
+    []
+  );
 
   const handleEncryptedMessagePayload = useCallback(async (data: {
     encryptedPayload: string;
@@ -1369,10 +1387,7 @@ export function useChat(roomId: string) {
         answeredAt: null,
       };
 
-      const localStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: callType === "video",
-      });
+      const localStream = await acquireLocalStream(callType, "user");
 
       localStreamRef.current = localStream;
 
@@ -1387,6 +1402,7 @@ export function useChat(roomId: string) {
         remoteStream: null,
         micMuted: false,
         cameraOff: callType === "audio",
+        cameraFacing: "user",
         error: null,
         startedAt: Date.now(),
         durationSec: 0,
@@ -1433,10 +1449,7 @@ export function useChat(roomId: string) {
       const offer = pendingOfferRef.current;
       clearIncomingAlert();
 
-      const localStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: offer.callType === "video",
-      });
+      const localStream = await acquireLocalStream(offer.callType, "user");
 
       localStreamRef.current = localStream;
 
@@ -1451,6 +1464,7 @@ export function useChat(roomId: string) {
         remoteStream: null,
         micMuted: false,
         cameraOff: offer.callType === "audio",
+        cameraFacing: "user",
         error: null,
         startedAt: Date.now(),
         durationSec: 0,
@@ -1535,6 +1549,66 @@ export function useChat(roomId: string) {
     setCallState((prev) => ({ ...prev, cameraOff: nextCameraOff }));
   };
 
+  const switchCamera = async () => {
+    const currentStream = localStreamRef.current;
+    const currentCall = callStateRef.current;
+
+    if (!currentStream || currentCall.callType !== "video" || !pcRef.current) {
+      return false;
+    }
+
+    const nextFacing = currentCall.cameraFacing === "environment" ? "user" : "environment";
+
+    try {
+      const replacementStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: nextFacing },
+        },
+      });
+
+      const nextVideoTrack = replacementStream.getVideoTracks()[0];
+      if (!nextVideoTrack) {
+        throw new Error("No video track available.");
+      }
+
+      nextVideoTrack.enabled = !currentCall.cameraOff;
+
+      const sender = pcRef.current
+        .getSenders()
+        .find((item) => item.track?.kind === "video");
+
+      if (!sender) {
+        replacementStream.getTracks().forEach((track) => track.stop());
+        return false;
+      }
+
+      await sender.replaceTrack(nextVideoTrack);
+
+      const audioTracks = currentStream.getAudioTracks();
+      const oldVideoTracks = currentStream.getVideoTracks();
+      oldVideoTracks.forEach((track) => track.stop());
+
+      const updatedStream = new MediaStream([...audioTracks, nextVideoTrack]);
+      localStreamRef.current = updatedStream;
+
+      setCallState((prev) => ({
+        ...prev,
+        localStream: updatedStream,
+        cameraFacing: nextFacing,
+      }));
+
+      return true;
+    } catch (err) {
+      console.error("Failed to switch camera", err);
+      setCallState((prev) => ({
+        ...prev,
+        error: "Could not switch camera on this device.",
+      }));
+      return false;
+    }
+  };
+
   return {
     messages,
     connectionState,
@@ -1550,6 +1624,7 @@ export function useChat(roomId: string) {
     endCall,
     toggleMic,
     toggleCamera,
+    switchCamera,
     clearCallLogs,
   };
 }

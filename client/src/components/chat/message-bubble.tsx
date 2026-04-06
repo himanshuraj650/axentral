@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Flame, Clock, FileText, Download } from "lucide-react";
+import { Flame, Clock, FileText, Download, Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/hooks/use-chat";
 
@@ -36,6 +36,10 @@ export function MessageBubble({ message, groupedWithPrev = false }: MessageBubbl
       : message.file
       ? `${message.file.size} B`
       : "";
+  const isVoiceNote =
+    !!message.file &&
+    message.file.mimeType.startsWith("audio/") &&
+    message.file.name.toLowerCase().startsWith("voice-note");
 
   return (
     <div
@@ -63,7 +67,19 @@ export function MessageBubble({ message, groupedWithPrev = false }: MessageBubbl
             onClick={() => window.open(message.image, '_blank')}
           />
         )}
-        {message.file && (
+        {message.file && isVoiceNote && (
+          <div className="mb-2 rounded-md border border-border/70 bg-background/55 px-3 py-2">
+            <div className="mb-2 flex items-center gap-2 text-xs font-medium">
+              <Mic className="w-4 h-4 shrink-0" />
+              <span className="truncate">Voice note</span>
+              <span className="text-[10px] opacity-70">{fileSizeLabel}</span>
+            </div>
+            <audio controls preload="metadata" className="w-full">
+              <source src={message.file.dataUrl} type={message.file.mimeType} />
+            </audio>
+          </div>
+        )}
+        {message.file && !isVoiceNote && (
           <a
             href={message.file.dataUrl}
             download={message.file.name}

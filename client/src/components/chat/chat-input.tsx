@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Flame, Image as ImageIcon, Paperclip, Send, Timer } from "lucide-react";
+import { Flame, Image as ImageIcon, Mic, Paperclip, Send, Square, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,7 @@ const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB
 const MAX_IMAGE_DIMENSION = 1600;
 const IMAGE_OUTPUT_QUALITY = 0.82;
 const IMAGE_DIRECT_SEND_BYTES = 1.5 * 1024 * 1024;
+const MAX_VOICE_NOTE_MS = 60_000;
 
 const TIMER_OPTIONS = [
   { label: "Off", value: null },
@@ -39,9 +40,14 @@ export function ChatInput({
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [timer, setTimer] = useState<number | null>(null);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const recordTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!textareaRef.current) return;
@@ -54,8 +60,30 @@ export function ChatInput({
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
+
+      if (recordTimeoutRef.current) {
+        clearTimeout(recordTimeoutRef.current);
+      }
+
+      mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+      recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
+
+  const getSupportedVoiceMimeType = () => {
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/ogg;codecs=opus",
+      "audio/mp4",
+    ];
+
+    if (typeof MediaRecorder === "undefined") {
+      return "";
+    }
+
+    return candidates.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
+  };
 
   const optimizeImageFile = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -173,6 +201,91 @@ export function ChatInput({
     reader.readAsDataURL(file);
   };
 
+  const stopVoiceRecording = () => {
+    if (recordTimeoutRef.current) {
+      clearTimeout(recordTimeoutRef.current);
+      recordTimeoutRef.current = null;
+    }
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const startVoiceRecording = async () => {
+    if (disabled || isRecordingVoice) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      onAttachmentError?.("Voice notes are not supported on this device/browser.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = getSupportedVoiceMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+
+      recordingStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      voiceChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        onAttachmentError?.("Voice note recording failed.");
+        setIsRecordingVoice(false);
+        recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+        recordingStreamRef.current = null;
+        mediaRecorderRef.current = null;
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(voiceChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+
+        recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+        recordingStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        setIsRecordingVoice(false);
+
+        if (blob.size === 0) {
+          return;
+        }
+
+        if (blob.size > MAX_ATTACHMENT_BYTES) {
+          onAttachmentError?.("Voice note is too large. Please record a shorter note.");
+          return;
+        }
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          onSendFile(
+            {
+              name: `voice-note-${Date.now()}.webm`,
+              mimeType: blob.type || "audio/webm",
+              size: blob.size,
+              dataUrl: reader.result as string,
+            },
+            timer
+          );
+        };
+        reader.readAsDataURL(blob);
+      };
+
+      recorder.start();
+      setIsRecordingVoice(true);
+      recordTimeoutRef.current = setTimeout(() => stopVoiceRecording(), MAX_VOICE_NOTE_MS);
+    } catch {
+      onAttachmentError?.("Microphone permission is required to record a voice note.");
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -213,6 +326,20 @@ export function ChatInput({
           title="Share file"
         >
           <Paperclip className="w-5 h-5" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "shrink-0 rounded-lg h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]",
+            isRecordingVoice && "text-destructive hover:text-destructive bg-destructive/15"
+          )}
+          disabled={disabled}
+          onClick={isRecordingVoice ? stopVoiceRecording : startVoiceRecording}
+          title={isRecordingVoice ? "Stop recording" : "Record voice note"}
+        >
+          {isRecordingVoice ? <Square className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
         </Button>
 
         <Popover>
@@ -277,6 +404,14 @@ export function ChatInput({
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-destructive/15 border border-destructive/40 text-destructive text-[10px] font-mono font-bold tracking-widest uppercase animate-pulse">
             <Flame className="w-3 h-3" />
             Messages destroy in {TIMER_OPTIONS.find((option) => option.value === timer)?.label}
+          </span>
+        </div>
+      )}
+      {isRecordingVoice && (
+        <div className="max-w-3xl mx-auto mt-2 flex justify-center">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-destructive/15 border border-destructive/40 text-destructive text-[10px] font-mono font-bold tracking-widest uppercase animate-pulse">
+            <Mic className="w-3 h-3" />
+            Recording voice note
           </span>
         </div>
       )}

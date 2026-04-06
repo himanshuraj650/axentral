@@ -20,6 +20,7 @@ import {
   PhoneMissed,
   Clock3,
   Trash2,
+  RefreshCw,
 } from "lucide-react";
 
 import { useChat } from "@/hooks/use-chat";
@@ -58,6 +59,7 @@ export default function Chat() {
     endCall,
     toggleMic,
     toggleCamera,
+    switchCamera,
     clearCallLogs,
   } = useChat(roomId);
 
@@ -644,14 +646,26 @@ export default function Chat() {
             </button>
 
             {callState.callType === "video" && (
-              <button
-                type="button"
-                onClick={toggleCamera}
-                className="h-12 w-12 rounded-full bg-card/90 border border-border text-secondary-foreground flex items-center justify-center hover-elevate"
-                aria-label="Toggle camera"
-              >
-                {callState.cameraOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={toggleCamera}
+                  className="h-12 w-12 rounded-full bg-card/90 border border-border text-secondary-foreground flex items-center justify-center hover-elevate"
+                  aria-label="Toggle camera"
+                >
+                  {callState.cameraOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void switchCamera()}
+                  className="h-12 w-12 rounded-full bg-card/90 border border-border text-secondary-foreground flex items-center justify-center hover-elevate"
+                  aria-label="Switch camera"
+                  title={`Switch to ${callState.cameraFacing === "user" ? "back" : "front"} camera`}
+                >
+                  <RefreshCw className="w-5 h-5" />
+                </button>
+              </>
             )}
 
             <button
