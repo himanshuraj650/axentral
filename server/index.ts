@@ -22,7 +22,7 @@ app.use((req, res, next) => {
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-  res.setHeader("Permissions-Policy", "geolocation=(), display-capture=(), usb=(), accelerometer=(), gyroscope=()");
+  res.setHeader("Permissions-Policy", "geolocation=(), display-capture=(self), usb=(), accelerometer=(), gyroscope=()");
   res.setHeader("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
 
   if (req.path.startsWith("/api") || req.headers.accept?.includes("text/html")) {
