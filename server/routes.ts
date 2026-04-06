@@ -666,6 +666,11 @@ export async function registerRoutes(
           roomClients.add(socket.id);
           socket.join(requestedRoomId);
 
+          socket.emit("signal", {
+            type: "joined",
+            payload: { roomId: requestedRoomId, clientsCount: roomClients.size },
+          });
+
           io.to(requestedRoomId).emit("signal", {
             type: "userJoined",
             payload: { clientsCount: roomClients.size },

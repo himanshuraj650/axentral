@@ -1097,13 +1097,6 @@ export function useChat(roomId: string) {
             payload: { roomId },
           })
         );
-
-        ws.send(
-          JSON.stringify({
-            type: "publicKey",
-            payload: { roomId, publicKey: myPublicKeyBase64Ref.current },
-          })
-        );
       };
 
       ws.onclose = () => {
@@ -1145,7 +1138,21 @@ export function useChat(roomId: string) {
         try {
           const parsed = JSON.parse(event.data);
 
-          if (parsed.type === "userJoined") {
+          if (parsed.type === "joined") {
+            const data = wsEvents.receive.joined.parse(parsed.payload);
+
+            ws.send(
+              JSON.stringify({
+                type: "publicKey",
+                payload: {
+                  roomId: data.roomId,
+                  publicKey: myPublicKeyBase64Ref.current,
+                },
+              })
+            );
+          }
+
+          else if (parsed.type === "userJoined") {
             const data = wsEvents.receive.userJoined.parse(parsed.payload);
 
             if (data.clientsCount > 1) {
