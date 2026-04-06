@@ -211,6 +211,7 @@ export function useChat(roomId: string) {
   const durationIntervalRef = useRef<number | null>(null);
   const disconnectTimeoutRef = useRef<number | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
+  const keyRetryIntervalRef = useRef<number | null>(null);
   const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
   const dynamicIceServersRef = useRef<RTCIceServer[] | null>(null);
   const dynamicIceServersExpiresAtRef = useRef<number>(0);
@@ -520,6 +521,13 @@ export function useChat(roomId: string) {
     }
   };
 
+  const clearKeyRetry = () => {
+    if (keyRetryIntervalRef.current) {
+      window.clearInterval(keyRetryIntervalRef.current);
+      keyRetryIntervalRef.current = null;
+    }
+  };
+
   const stopStream = (stream: MediaStream | null) => {
     stream?.getTracks().forEach((track) => track.stop());
   };
@@ -561,6 +569,7 @@ export function useChat(roomId: string) {
       clearOutgoingCallTimeout();
       clearIncomingAlert();
       clearDurationTicker();
+      clearKeyRetry();
 
       if (resetState) {
         resetCallState();
@@ -1086,6 +1095,7 @@ export function useChat(roomId: string) {
         setConnectionState("waiting_for_peer");
 
         clearHeartbeat();
+        clearKeyRetry();
         heartbeatIntervalRef.current = window.setInterval(() => {
           if (ws.readyState !== WS_READY_STATE.OPEN) return;
           ws.send(JSON.stringify({ type: "ping", payload: { ts: Date.now() } }));
@@ -1097,10 +1107,28 @@ export function useChat(roomId: string) {
             payload: { roomId },
           })
         );
+
+        keyRetryIntervalRef.current = window.setInterval(() => {
+          if (
+            ws.readyState !== WS_READY_STATE.OPEN ||
+            !myPublicKeyBase64Ref.current ||
+            sharedSecretRef.current
+          ) {
+            return;
+          }
+
+          ws.send(
+            JSON.stringify({
+              type: "publicKey",
+              payload: { roomId, publicKey: myPublicKeyBase64Ref.current },
+            })
+          );
+        }, 3000);
       };
 
       ws.onclose = () => {
         clearHeartbeat();
+        clearKeyRetry();
         setConnectionState("disconnected");
         sharedSecretRef.current = null;
         setPeerIsTyping(false);
@@ -1183,6 +1211,7 @@ export function useChat(roomId: string) {
               );
 
               sharedSecretRef.current = secret;
+              clearKeyRetry();
 
               setConnectionState("secured");
 
@@ -1298,6 +1327,7 @@ export function useChat(roomId: string) {
 
     return () => {
       clearHeartbeat();
+      clearKeyRetry();
 
       if (wsRef.current) {
         intentionalDisconnectRef.current = true;
