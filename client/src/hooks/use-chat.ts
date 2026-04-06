@@ -109,6 +109,9 @@ const WS_READY_STATE = {
   CLOSED: 3,
 } as const;
 
+const CHUNKED_MESSAGE_SIZE = 512 * 1024;
+const CHUNKED_MESSAGE_TTL_MS = 2 * 60 * 1000;
+
 function createSocketIoCompatSocket(): CompatSocket {
   const socket: Socket = io({
     path: "/socket.io",
@@ -144,8 +147,11 @@ function createSocketIoCompatSocket(): CompatSocket {
     compat.onopen?.();
   });
 
-  socket.on("disconnect", () => {
-    compat.readyState = WS_READY_STATE.CLOSED;
+  socket.on("disconnect", (reason) => {
+    compat.readyState =
+      reason === "io client disconnect"
+        ? WS_READY_STATE.CLOSED
+        : WS_READY_STATE.CONNECTING;
     compat.onclose?.();
   });
 
@@ -213,6 +219,19 @@ export function useChat(roomId: string) {
     startedAt: number;
     answeredAt: number | null;
   } | null>(null);
+  const intentionalDisconnectRef = useRef(false);
+  const pendingChunkedMessagesRef = useRef(
+    new Map<
+      string,
+      {
+        iv: string;
+        timestamp: number;
+        total: number;
+        chunks: string[];
+        updatedAt: number;
+      }
+    >()
+  );
 
   const env = import.meta.env as Record<string, string | undefined>;
 
@@ -319,6 +338,20 @@ export function useChat(roomId: string) {
 
     return () => window.clearTimeout(timeout);
   }, [callState.error]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      const now = Date.now();
+
+      for (const [messageId, entry] of Array.from(pendingChunkedMessagesRef.current.entries())) {
+        if (now - entry.updatedAt > CHUNKED_MESSAGE_TTL_MS) {
+          pendingChunkedMessagesRef.current.delete(messageId);
+        }
+      }
+    }, 30_000);
+
+    return () => window.clearInterval(interval);
+  }, []);
 
   const resetCallState = useCallback(() => {
     setCallState({
@@ -780,6 +813,51 @@ export function useChat(roomId: string) {
     setMessages((prev) => [...prev, newMessage]);
   }, []);
 
+  const handleEncryptedMessageChunk = useCallback(
+    async (data: {
+      messageId: string;
+      encryptedChunk: string;
+      iv: string;
+      index: number;
+      total: number;
+      timestamp: number;
+    }) => {
+      const existing = pendingChunkedMessagesRef.current.get(data.messageId);
+      const next =
+        existing ??
+        {
+          iv: data.iv,
+          timestamp: data.timestamp,
+          total: data.total,
+          chunks: Array<string>(data.total).fill(""),
+          updatedAt: Date.now(),
+        };
+
+      if (data.index < 0 || data.index >= data.total || next.total !== data.total) {
+        pendingChunkedMessagesRef.current.delete(data.messageId);
+        return;
+      }
+
+      next.iv = data.iv;
+      next.timestamp = data.timestamp;
+      next.updatedAt = Date.now();
+      next.chunks[data.index] = data.encryptedChunk;
+      pendingChunkedMessagesRef.current.set(data.messageId, next);
+
+      if (next.chunks.some((chunk) => chunk.length === 0)) {
+        return;
+      }
+
+      pendingChunkedMessagesRef.current.delete(data.messageId);
+      await handleEncryptedMessagePayload({
+        encryptedPayload: next.chunks.join(""),
+        iv: next.iv,
+        timestamp: next.timestamp,
+      });
+    },
+    [handleEncryptedMessagePayload]
+  );
+
   const handleCallSignal = useCallback(async (signal: SignalPayload) => {
     if (signal.kind === "call-offer") {
       if (
@@ -919,6 +997,7 @@ export function useChat(roomId: string) {
     if (wsRef.current) return;
 
     try {
+      intentionalDisconnectRef.current = false;
       if (!window.isSecureContext) {
         setConnectionState("error");
         setErrorMsg(
@@ -964,9 +1043,12 @@ export function useChat(roomId: string) {
       ws.onclose = () => {
         clearHeartbeat();
         setConnectionState("disconnected");
-        wsRef.current = null;
         sharedSecretRef.current = null;
         setPeerIsTyping(false);
+
+        if (intentionalDisconnectRef.current) {
+          wsRef.current = null;
+        }
 
         const hasActiveOrPendingCall =
           callStateRef.current.isInCall ||
@@ -1067,6 +1149,11 @@ export function useChat(roomId: string) {
             await handleEncryptedMessagePayload(data);
           }
 
+          else if (parsed.type === "messageChunk") {
+            const data = wsEvents.receive.messageChunk.parse(parsed.payload);
+            await handleEncryptedMessageChunk(data);
+          }
+
           else if (parsed.type === "typing") {
             const data = wsEvents.receive.typing.parse(parsed.payload);
             setPeerIsTyping(data.isTyping);
@@ -1127,7 +1214,7 @@ export function useChat(roomId: string) {
       setConnectionState("error");
       setErrorMsg("Failed to initialize encryption");
     }
-  }, [cleanupCall, handleCallSignal, handleEncryptedMessagePayload, roomId]);
+  }, [cleanupCall, handleCallSignal, handleEncryptedMessageChunk, handleEncryptedMessagePayload, roomId]);
 
   useEffect(() => {
     connect();
@@ -1136,6 +1223,7 @@ export function useChat(roomId: string) {
       clearHeartbeat();
 
       if (wsRef.current) {
+        intentionalDisconnectRef.current = true;
         cleanupCall(false);
 
         wsRef.current.send(
@@ -1179,27 +1267,67 @@ export function useChat(roomId: string) {
         sharedSecretRef.current
       );
 
-      wsRef.current.send(
-        JSON.stringify({
-          type: "message",
-          payload: { roomId, encryptedPayload, iv },
-        })
-      );
-
       const expiresAt = destructTimer
         ? Date.now() + destructTimer * 1000
         : null;
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `local-${Date.now()}`,
-          ...content,
-          isMine: true,
-          timestamp: Date.now(),
-          expiresAt,
-        },
-      ]);
+      const addLocalMessage = () => {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `local-${Date.now()}`,
+            ...content,
+            isMine: true,
+            timestamp: Date.now(),
+            expiresAt,
+          },
+        ]);
+      };
+
+      const serializedLength = JSON.stringify({
+        type: "message",
+        payload: { roomId, encryptedPayload, iv },
+      }).length;
+
+      if (serializedLength > CHUNKED_MESSAGE_SIZE) {
+        const chunks =
+          encryptedPayload.match(new RegExp(`.{1,${CHUNKED_MESSAGE_SIZE}}`, "g")) ?? [];
+        const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const timestamp = Date.now();
+
+        for (let index = 0; index < chunks.length; index += 1) {
+          if (
+            !wsRef.current ||
+            wsRef.current.readyState !== WS_READY_STATE.OPEN
+          ) {
+            return false;
+          }
+
+          wsRef.current.send(
+            JSON.stringify({
+              type: "messageChunk",
+              payload: {
+                roomId,
+                messageId,
+                encryptedChunk: chunks[index],
+                iv,
+                index,
+                total: chunks.length,
+                timestamp,
+              },
+            })
+          );
+        }
+      } else {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "message",
+            payload: { roomId, encryptedPayload, iv },
+          })
+        );
+      }
+
+      addLocalMessage();
 
       return true;
     } catch (err) {
@@ -1406,177 +1534,6 @@ export function useChat(roomId: string) {
 
     setCallState((prev) => ({ ...prev, cameraOff: nextCameraOff }));
   };
-
-  // --- WebRTC Data Channel for Large File Transfer ---
-
-  // Constants for chunking
-  const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB
-  const FILE_CHUNK_SIZE = 64 * 1024; // 64KB per chunk
-
-  // Data channel refs
-  const fileSendChannelRef = useRef<RTCDataChannel | null>(null);
-  const fileReceiveChannelRef = useRef<RTCDataChannel | null>(null);
-  const incomingFileChunksRef = useRef<Uint8Array[]>([]);
-  const incomingFileMetaRef = useRef<any>(null);
-
-  // Add a flag to track connection state
-  const [peerConnectionHealthy, setPeerConnectionHealthy] = useState(true);
-
-  // Enhanced error handling for data channel and peer connection
-  function handleDataChannelError(e: any) {
-    console.error('[WebRTC] Data channel error:', e);
-    setFileTransferEnabled(false);
-    setPeerConnectionHealthy(false);
-    showToast({ title: 'File transfer failed. Reconnecting...', variant: 'destructive' });
-    resetPeerConnection();
-  }
-
-  function handlePeerConnectionError(e: any) {
-    console.error('[WebRTC] Peer connection error:', e);
-    setPeerConnectionHealthy(false);
-    showToast({ title: 'Connection lost. Reconnecting...', variant: 'destructive' });
-    resetPeerConnection();
-  }
-
-  // Reset and reconnect peer connection and data channel
-  function resetPeerConnection() {
-    try {
-      if (pcRef.current) {
-        pcRef.current.close();
-        pcRef.current = null;
-      }
-      fileSendChannelRef.current = null;
-      fileReceiveChannelRef.current = null;
-      setTimeout(() => {
-        // You may want to trigger your connection setup logic here
-        window.location.reload(); // Simple recovery: reload page to reconnect
-      }, 1000);
-    } catch (err) {
-      console.error('[WebRTC] Failed to reset peer connection:', err);
-    }
-  }
-
-  // Setup data channel on offer/answer (symmetric for both peers)
-  function setupFileDataChannel(pc: RTCPeerConnection, isInitiator: boolean) {
-    pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
-        handlePeerConnectionError(new Error('ICE connection failed/disconnected'));
-      }
-    };
-    if (isInitiator) {
-      const channel = pc.createDataChannel("file");
-      fileSendChannelRef.current = channel;
-      channel.binaryType = "arraybuffer";
-      channel.onopen = () => {
-        console.log("[WebRTC] File data channel open (initiator)");
-        setFileTransferEnabled(true);
-        setPeerConnectionHealthy(true);
-      };
-      channel.onclose = () => {
-        console.log("[WebRTC] File data channel closed (initiator)");
-        setPeerConnectionHealthy(false);
-      };
-      channel.onerror = handleDataChannelError;
-      channel.onmessage = handleFileChunkReceived;
-    }
-    pc.ondatachannel = (event) => {
-      if (event.channel.label === "file") {
-        fileReceiveChannelRef.current = event.channel;
-        event.channel.binaryType = "arraybuffer";
-        event.channel.onmessage = handleFileChunkReceived;
-        event.channel.onopen = () => {
-          console.log("[WebRTC] File data channel open (receiver)");
-          setFileTransferEnabled(true);
-          setPeerConnectionHealthy(true);
-        };
-        event.channel.onclose = () => {
-          console.log("[WebRTC] File data channel closed (receiver)");
-          setPeerConnectionHealthy(false);
-        };
-        event.channel.onerror = handleDataChannelError;
-      }
-    };
-  }
-
-  // Send file in chunks
-  async function sendFileViaDataChannel(file: File) {
-    if (!fileTransferEnabled || !peerConnectionHealthy) {
-      showToast({ title: 'File transfer is currently disabled or connection is unhealthy.', variant: 'destructive' });
-      return;
-    }
-    const channel = fileSendChannelRef.current || fileReceiveChannelRef.current;
-    if (!channel || channel.readyState !== "open") {
-      showToast({ title: "File channel not open", variant: "destructive" });
-      console.error('[WebRTC] File channel not open for sending');
-      return;
-    }
-    try {
-      // Send metadata first
-      channel.send(JSON.stringify({
-        name: file.name,
-        size: file.size,
-        mimeType: file.type,
-        kind: "meta"
-      }));
-      // Send chunks
-      let offset = 0;
-      while (offset < file.size) {
-        const chunk = await file.slice(offset, offset + FILE_CHUNK_SIZE).arrayBuffer();
-        channel.send(chunk);
-        offset += FILE_CHUNK_SIZE;
-      }
-      // Send end marker
-      channel.send(JSON.stringify({ kind: "end" }));
-      showToast({ title: "File sent via data channel!" });
-      console.log('[WebRTC] File sent via data channel:', file.name, file.size);
-    } catch (err) {
-      handleDataChannelError(err);
-    }
-  }
-
-  // Handle received file chunks
-  function handleFileChunkReceived(event: MessageEvent) {
-    if (typeof event.data === "string") {
-      const meta = JSON.parse(event.data);
-      if (meta.kind === "meta") {
-        incomingFileMetaRef.current = meta;
-        incomingFileChunksRef.current = [];
-        console.log('[WebRTC] Receiving file meta:', meta);
-        return;
-      }
-      if (meta.kind === "end") {
-        // Reassemble file
-        const meta = incomingFileMetaRef.current;
-        const blob = new Blob(incomingFileChunksRef.current, { type: meta.mimeType });
-        const url = URL.createObjectURL(blob);
-        // Add to chat as a file message
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `${Date.now()}-file` + Math.random().toString(36).substring(7),
-            file: {
-              name: meta.name,
-              mimeType: meta.mimeType,
-              size: meta.size,
-              dataUrl: url,
-            },
-            isMine: false,
-            timestamp: Date.now(),
-            expiresAt: null,
-          },
-        ]);
-        incomingFileChunksRef.current = [];
-        incomingFileMetaRef.current = null;
-        showToast({ title: "File received via data channel!" });
-        console.log('[WebRTC] File received and reassembled:', meta.name, meta.size);
-        return;
-      }
-    } else {
-      // Binary chunk
-      incomingFileChunksRef.current.push(new Uint8Array(event.data));
-      console.log('[WebRTC] Received file chunk:', event.data.byteLength);
-    }
-  }
 
   return {
     messages,

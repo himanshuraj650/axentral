@@ -670,6 +670,22 @@ export async function registerRoutes(
           return;
         }
 
+        if (type === "messageChunk") {
+          const parsed = wsEvents.send.messageChunk.parse(payload);
+          socket.to(currentRoomId).emit("signal", {
+            type: "messageChunk",
+            payload: {
+              messageId: parsed.messageId,
+              encryptedChunk: parsed.encryptedChunk,
+              iv: parsed.iv,
+              index: parsed.index,
+              total: parsed.total,
+              timestamp: parsed.timestamp,
+            },
+          });
+          return;
+        }
+
         if (type === "typing") {
           const parsed = wsEvents.send.typing.parse(payload);
           socket.to(currentRoomId).emit("signal", {
