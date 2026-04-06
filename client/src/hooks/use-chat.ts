@@ -116,7 +116,7 @@ const CHUNKED_MESSAGE_TTL_MS = 2 * 60 * 1000;
 function createSocketIoCompatSocket(): CompatSocket {
   const socket: Socket = io({
     path: "/socket.io",
-    transports: ["websocket", "polling"],
+    transports: ["polling", "websocket"],
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,

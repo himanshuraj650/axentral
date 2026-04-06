@@ -624,8 +624,15 @@ export async function registerRoutes(
         }
 
         if (type === "join") {
-          const parsed = wsEvents.send.join.parse(payload);
-          const requestedRoomId = parsed.roomId.trim().toUpperCase();
+          const parsed = wsEvents.send.join.safeParse(payload);
+          if (!parsed.success) {
+            socket.emit("signal", {
+              type: "error",
+              payload: { message: "Invalid room join payload" },
+            });
+            return;
+          }
+          const requestedRoomId = parsed.data.roomId.trim().toUpperCase();
           const existingRoom = await storage.getRoom(requestedRoomId);
 
           if (!existingRoom) {
@@ -669,21 +676,27 @@ export async function registerRoutes(
         if (!currentRoomId) return;
 
         if (type === "publicKey") {
-          const parsed = wsEvents.send.publicKey.parse(payload);
+          const parsed = wsEvents.send.publicKey.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
           socket.to(currentRoomId).emit("signal", {
             type: "publicKey",
-            payload: { publicKey: parsed.publicKey },
+            payload: { publicKey: parsed.data.publicKey },
           });
           return;
         }
 
         if (type === "message") {
-          const parsed = wsEvents.send.message.parse(payload);
+          const parsed = wsEvents.send.message.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
           socket.to(currentRoomId).emit("signal", {
             type: "message",
             payload: {
-              encryptedPayload: parsed.encryptedPayload,
-              iv: parsed.iv,
+              encryptedPayload: parsed.data.encryptedPayload,
+              iv: parsed.data.iv,
               timestamp: Date.now(),
             },
           });
@@ -691,37 +704,46 @@ export async function registerRoutes(
         }
 
         if (type === "messageChunk") {
-          const parsed = wsEvents.send.messageChunk.parse(payload);
+          const parsed = wsEvents.send.messageChunk.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
           socket.to(currentRoomId).emit("signal", {
             type: "messageChunk",
             payload: {
-              messageId: parsed.messageId,
-              encryptedChunk: parsed.encryptedChunk,
-              iv: parsed.iv,
-              index: parsed.index,
-              total: parsed.total,
-              timestamp: parsed.timestamp,
+              messageId: parsed.data.messageId,
+              encryptedChunk: parsed.data.encryptedChunk,
+              iv: parsed.data.iv,
+              index: parsed.data.index,
+              total: parsed.data.total,
+              timestamp: parsed.data.timestamp,
             },
           });
           return;
         }
 
         if (type === "typing") {
-          const parsed = wsEvents.send.typing.parse(payload);
+          const parsed = wsEvents.send.typing.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
           socket.to(currentRoomId).emit("signal", {
             type: "typing",
-            payload: { isTyping: parsed.isTyping },
+            payload: { isTyping: parsed.data.isTyping },
           });
           return;
         }
 
         if (type === "callSignal") {
-          const parsed = wsEvents.send.callSignal.parse(payload);
+          const parsed = wsEvents.send.callSignal.safeParse(payload);
+          if (!parsed.success) {
+            return;
+          }
           socket.to(currentRoomId).emit("signal", {
             type: "callSignal",
             payload: {
-              encryptedPayload: parsed.encryptedPayload,
-              iv: parsed.iv,
+              encryptedPayload: parsed.data.encryptedPayload,
+              iv: parsed.data.iv,
               timestamp: Date.now(),
             },
           });
@@ -758,9 +780,12 @@ export async function registerRoutes(
         }
 
         if (type === "leave") {
-          socket.leave(currentRoomId);
-          leaveIoRoom(socket.id, currentRoomId);
-          currentRoomId = null;
+          const parsed = wsEvents.send.leave.safeParse(payload);
+          if (parsed.success) {
+            socket.leave(currentRoomId);
+            leaveIoRoom(socket.id, currentRoomId);
+            currentRoomId = null;
+          }
         }
       } catch {
         socket.emit("signal", {
