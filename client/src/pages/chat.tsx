@@ -21,6 +21,7 @@ import {
   Clock3,
   Trash2,
   RefreshCw,
+  MonitorUp,
 } from "lucide-react";
 
 import { useChat } from "@/hooks/use-chat";
@@ -59,6 +60,8 @@ export default function Chat() {
     endCall,
     toggleMic,
     toggleCamera,
+    upgradeCallToVideo,
+    toggleScreenShare,
     switchCamera,
     clearCallLogs,
   } = useChat(roomId);
@@ -645,11 +648,25 @@ export default function Chat() {
               {callState.micMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
             </button>
 
+            {callState.isInCall &&
+              (!callState.localStream?.getVideoTracks().length || callState.callType === "audio") && (
+              <button
+                type="button"
+                onClick={() => void upgradeCallToVideo()}
+                className="h-12 px-4 rounded-full bg-card/90 border border-border text-secondary-foreground inline-flex items-center gap-2 hover-elevate"
+                aria-label="Switch to video call"
+              >
+                <Video className="w-5 h-5" />
+                Video
+              </button>
+            )}
+
             {callState.callType === "video" && (
               <>
                 <button
                   type="button"
                   onClick={toggleCamera}
+                  disabled={callState.isScreenSharing}
                   className="h-12 w-12 rounded-full bg-card/90 border border-border text-secondary-foreground flex items-center justify-center hover-elevate"
                   aria-label="Toggle camera"
                 >
@@ -658,7 +675,18 @@ export default function Chat() {
 
                 <button
                   type="button"
+                  onClick={() => void toggleScreenShare()}
+                  className="h-12 w-12 rounded-full bg-card/90 border border-border text-secondary-foreground flex items-center justify-center hover-elevate"
+                  aria-label={callState.isScreenSharing ? "Stop screen share" : "Start screen share"}
+                  title={callState.isScreenSharing ? "Stop screen share" : "Start screen share"}
+                >
+                  <MonitorUp className="w-5 h-5" />
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => void switchCamera()}
+                  disabled={callState.isScreenSharing}
                   className="h-12 w-12 rounded-full bg-card/90 border border-border text-secondary-foreground flex items-center justify-center hover-elevate"
                   aria-label="Switch camera"
                   title={`Switch to ${callState.cameraFacing === "user" ? "back" : "front"} camera`}

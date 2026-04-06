@@ -63,6 +63,16 @@ type SignalPayload =
     }
   | {
       kind: "call-reject";
+    }
+  | {
+      kind: "call-upgrade-offer";
+      callType: "video";
+      sdp: RTCSessionDescriptionInit;
+    }
+  | {
+      kind: "call-upgrade-answer";
+      callType: "video";
+      sdp: RTCSessionDescriptionInit;
     };
 
 export type CallState = {
@@ -77,6 +87,7 @@ export type CallState = {
   micMuted: boolean;
   cameraOff: boolean;
   cameraFacing: "user" | "environment";
+  isScreenSharing: boolean;
   error: string | null;
   startedAt: number | null;
   durationSec: number;
@@ -175,6 +186,7 @@ export function useChat(roomId: string) {
     micMuted: false,
     cameraOff: false,
     cameraFacing: "user",
+    isScreenSharing: false,
     error: null,
     startedAt: null,
     durationSec: 0,
@@ -201,6 +213,8 @@ export function useChat(roomId: string) {
   const durationIntervalRef = useRef<number | null>(null);
   const disconnectTimeoutRef = useRef<number | null>(null);
   const heartbeatIntervalRef = useRef<number | null>(null);
+  const cameraVideoTrackRef = useRef<MediaStreamTrack | null>(null);
+  const screenShareTrackRef = useRef<MediaStreamTrack | null>(null);
   const ringtoneAudioRef = useRef<HTMLAudioElement | null>(null);
   const dynamicIceServersRef = useRef<RTCIceServer[] | null>(null);
   const dynamicIceServersExpiresAtRef = useRef<number>(0);
@@ -358,6 +372,7 @@ export function useChat(roomId: string) {
       micMuted: false,
       cameraOff: false,
       cameraFacing: "user",
+      isScreenSharing: false,
       error: null,
       startedAt: null,
       durationSec: 0,
@@ -514,6 +529,29 @@ export function useChat(roomId: string) {
     stream?.getTracks().forEach((track) => track.stop());
   };
 
+  const replaceOrAddTrack = useCallback(
+    async (kind: "audio" | "video", track: MediaStreamTrack | null) => {
+      if (!pcRef.current) return false;
+
+      const sender = pcRef.current
+        .getSenders()
+        .find((item) => item.track?.kind === kind);
+
+      if (sender) {
+        await sender.replaceTrack(track);
+        return true;
+      }
+
+      if (!track || !localStreamRef.current) {
+        return false;
+      }
+
+      pcRef.current.addTrack(track, localStreamRef.current);
+      return true;
+    },
+    []
+  );
+
   const flushPendingIceCandidates = useCallback(async (pc: RTCPeerConnection) => {
     if (!pc.remoteDescription || pendingIceCandidatesRef.current.length === 0) {
       return;
@@ -546,6 +584,8 @@ export function useChat(roomId: string) {
 
       localStreamRef.current = null;
       remoteStreamRef.current = null;
+      cameraVideoTrackRef.current = null;
+      screenShareTrackRef.current = null;
       pendingOfferRef.current = null;
       pendingIceCandidatesRef.current = [];
       clearOutgoingCallTimeout();
@@ -566,21 +606,48 @@ export function useChat(roomId: string) {
     async (signal: SignalPayload) => {
       if (
         !wsRef.current ||
+        !sharedSecretRef.current ||
         wsRef.current.readyState !== WS_READY_STATE.OPEN
       ) {
         return false;
       }
 
+      const { encryptedPayload, iv } = await encryptMessage(
+        JSON.stringify(signal),
+        sharedSecretRef.current
+      );
+
       wsRef.current.send(
         JSON.stringify({
-          type: "callSignalPlain",
-          payload: { roomId, signal },
+          type: "callSignal",
+          payload: { roomId, encryptedPayload, iv },
         })
       );
 
       return true;
     },
     [roomId]
+  );
+
+  const renegotiateActiveCall = useCallback(
+    async (kind: "call-upgrade-offer" | "call-upgrade-answer") => {
+      if (!pcRef.current) {
+        return false;
+      }
+
+      const description =
+        kind === "call-upgrade-offer"
+          ? await pcRef.current.createOffer()
+          : await pcRef.current.createAnswer();
+      await pcRef.current.setLocalDescription(description);
+
+      return sendEncryptedCallSignal({
+        kind,
+        callType: "video",
+        sdp: description,
+      });
+    },
+    [sendEncryptedCallSignal]
   );
 
   const createPeerConnection = useCallback(async () => {
@@ -813,6 +880,88 @@ export function useChat(roomId: string) {
     []
   );
 
+  const ensureLocalVideoTrack = useCallback(
+    async (facingMode: "user" | "environment" = "user") => {
+      const currentStream = localStreamRef.current;
+      const existingTrack = currentStream?.getVideoTracks()[0] ?? null;
+
+      if (existingTrack && existingTrack.readyState === "live") {
+        if (!screenShareTrackRef.current || existingTrack !== screenShareTrackRef.current) {
+          cameraVideoTrackRef.current = existingTrack;
+        }
+        return existingTrack;
+      }
+
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: facingMode } },
+      });
+
+      const nextVideoTrack = videoStream.getVideoTracks()[0];
+      if (!nextVideoTrack) {
+        throw new Error("No video track available.");
+      }
+
+      cameraVideoTrackRef.current = nextVideoTrack;
+
+      if (currentStream) {
+        currentStream.addTrack(nextVideoTrack);
+        localStreamRef.current = currentStream;
+      } else {
+        localStreamRef.current = videoStream;
+      }
+
+      setCallState((prev) => ({
+        ...prev,
+        callType: "video",
+        cameraOff: false,
+        cameraFacing: facingMode,
+        isScreenSharing: false,
+        localStream: localStreamRef.current,
+      }));
+
+      return nextVideoTrack;
+    },
+    []
+  );
+
+  const stopScreenShare = useCallback(async () => {
+    const currentStream = localStreamRef.current;
+    const screenTrack = screenShareTrackRef.current;
+
+    if (!currentStream || !screenTrack) {
+      return false;
+    }
+
+    currentStream.removeTrack(screenTrack);
+    screenTrack.stop();
+    screenShareTrackRef.current = null;
+
+    const cameraTrack = cameraVideoTrackRef.current;
+    if (cameraTrack && cameraTrack.readyState === "live") {
+      if (!currentStream.getVideoTracks().some((track) => track.id === cameraTrack.id)) {
+        currentStream.addTrack(cameraTrack);
+      }
+      cameraTrack.enabled = !callStateRef.current.cameraOff;
+      await replaceOrAddTrack("video", cameraTrack);
+      setCallState((prev) => ({
+        ...prev,
+        isScreenSharing: false,
+        localStream: currentStream,
+      }));
+      return true;
+    }
+
+    await replaceOrAddTrack("video", null);
+    setCallState((prev) => ({
+      ...prev,
+      isScreenSharing: false,
+      cameraOff: true,
+      localStream: currentStream,
+    }));
+    return true;
+  }, [replaceOrAddTrack]);
+
   const handleEncryptedMessagePayload = useCallback(async (data: {
     encryptedPayload: string;
     iv: string;
@@ -973,6 +1122,42 @@ export function useChat(roomId: string) {
       return;
     }
 
+    if (signal.kind === "call-upgrade-offer") {
+      if (!pcRef.current) {
+        return;
+      }
+
+      await pcRef.current.setRemoteDescription(signal.sdp);
+      await flushPendingIceCandidates(pcRef.current);
+      await renegotiateActiveCall("call-upgrade-answer");
+
+      setCallState((prev) => ({
+        ...prev,
+        callType: "video",
+        cameraOff: (localStreamRef.current?.getVideoTracks().length ?? 0) === 0,
+        isInCall: true,
+        status: "active",
+      }));
+      return;
+    }
+
+    if (signal.kind === "call-upgrade-answer") {
+      if (!pcRef.current) {
+        return;
+      }
+
+      await pcRef.current.setRemoteDescription(signal.sdp);
+      await flushPendingIceCandidates(pcRef.current);
+
+      setCallState((prev) => ({
+        ...prev,
+        callType: "video",
+        isInCall: true,
+        status: "active",
+      }));
+      return;
+    }
+
     if (signal.kind === "ice-candidate") {
       if (!pcRef.current) {
         // Candidate can arrive before peer connection exists (common on mobile/slow devices).
@@ -1011,7 +1196,7 @@ export function useChat(roomId: string) {
       appendCallLog("rejected");
       cleanupCall(true, "Call declined by peer.");
     }
-  }, [appendCallLog, cleanupCall, flushPendingIceCandidates, roomId, sendEncryptedCallSignal]);
+  }, [appendCallLog, cleanupCall, flushPendingIceCandidates, renegotiateActiveCall, roomId, sendEncryptedCallSignal]);
 
   // Auto-delete expired messages
   useEffect(() => {
@@ -1422,6 +1607,8 @@ export function useChat(roomId: string) {
       const localStream = await acquireLocalStream(callType, "user");
 
       localStreamRef.current = localStream;
+      cameraVideoTrackRef.current = localStream.getVideoTracks()[0] ?? null;
+      screenShareTrackRef.current = null;
 
       setCallState((prev) => ({
         ...prev,
@@ -1435,6 +1622,7 @@ export function useChat(roomId: string) {
         micMuted: false,
         cameraOff: callType === "audio",
         cameraFacing: "user",
+        isScreenSharing: false,
         error: null,
         startedAt: Date.now(),
         durationSec: 0,
@@ -1484,6 +1672,8 @@ export function useChat(roomId: string) {
       const localStream = await acquireLocalStream(offer.callType, "user");
 
       localStreamRef.current = localStream;
+      cameraVideoTrackRef.current = localStream.getVideoTracks()[0] ?? null;
+      screenShareTrackRef.current = null;
 
       setCallState((prev) => ({
         ...prev,
@@ -1497,6 +1687,7 @@ export function useChat(roomId: string) {
         micMuted: false,
         cameraOff: offer.callType === "audio",
         cameraFacing: "user",
+        isScreenSharing: false,
         error: null,
         startedAt: Date.now(),
         durationSec: 0,
@@ -1585,7 +1776,12 @@ export function useChat(roomId: string) {
     const currentStream = localStreamRef.current;
     const currentCall = callStateRef.current;
 
-    if (!currentStream || currentCall.callType !== "video" || !pcRef.current) {
+    if (
+      !currentStream ||
+      currentCall.callType !== "video" ||
+      !pcRef.current ||
+      currentCall.isScreenSharing
+    ) {
       return false;
     }
 
@@ -1630,6 +1826,7 @@ export function useChat(roomId: string) {
           throw new Error("No video track available.");
         }
 
+        cameraVideoTrackRef.current = nextVideoTrack;
         nextVideoTrack.enabled = !currentCall.cameraOff;
 
         const sender = pcRef.current
@@ -1665,6 +1862,115 @@ export function useChat(roomId: string) {
     }
   };
 
+  const upgradeCallToVideo = async () => {
+    const currentCall = callStateRef.current;
+    if (
+      !pcRef.current ||
+      !localStreamRef.current ||
+      !currentCall.isInCall ||
+      currentCall.status !== "active"
+    ) {
+      return false;
+    }
+
+    try {
+      setCallState((prev) => ({ ...prev, error: null }));
+      const videoTrack = await ensureLocalVideoTrack(currentCall.cameraFacing);
+      videoTrack.enabled = true;
+      await replaceOrAddTrack("video", videoTrack);
+
+      const renegotiated = await renegotiateActiveCall("call-upgrade-offer");
+      if (!renegotiated) {
+        throw new Error("Renegotiation failed");
+      }
+
+      setCallState((prev) => ({
+        ...prev,
+        callType: "video",
+        cameraOff: false,
+        isScreenSharing: false,
+        localStream: localStreamRef.current,
+      }));
+      return true;
+    } catch (err) {
+      console.error("Failed to upgrade call to video", err);
+      setCallState((prev) => ({
+        ...prev,
+        error: "Could not switch this call to video.",
+      }));
+      return false;
+    }
+  };
+
+  const toggleScreenShare = async () => {
+    const currentCall = callStateRef.current;
+    const currentStream = localStreamRef.current;
+
+    if (
+      !currentCall.isInCall ||
+      currentCall.callType !== "video" ||
+      !currentStream ||
+      !pcRef.current
+    ) {
+      return false;
+    }
+
+    if (currentCall.isScreenSharing) {
+      return stopScreenShare();
+    }
+
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      setCallState((prev) => ({
+        ...prev,
+        error: "Screen sharing is not supported on this device/browser.",
+      }));
+      return false;
+    }
+
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false,
+      });
+
+      const displayTrack = displayStream.getVideoTracks()[0];
+      if (!displayTrack) {
+        throw new Error("No display track available.");
+      }
+
+      const existingVideoTrack = currentStream.getVideoTracks()[0] ?? null;
+      if (existingVideoTrack && existingVideoTrack !== cameraVideoTrackRef.current) {
+        currentStream.removeTrack(existingVideoTrack);
+      } else if (existingVideoTrack) {
+        currentStream.removeTrack(existingVideoTrack);
+      }
+
+      await replaceOrAddTrack("video", displayTrack);
+      currentStream.addTrack(displayTrack);
+      localStreamRef.current = currentStream;
+      screenShareTrackRef.current = displayTrack;
+
+      displayTrack.onended = () => {
+        void stopScreenShare();
+      };
+
+      setCallState((prev) => ({
+        ...prev,
+        isScreenSharing: true,
+        cameraOff: false,
+        localStream: currentStream,
+      }));
+      return true;
+    } catch (err) {
+      console.error("Failed to start screen share", err);
+      setCallState((prev) => ({
+        ...prev,
+        error: "Could not start screen sharing.",
+      }));
+      return false;
+    }
+  };
+
   return {
     messages,
     connectionState,
@@ -1680,6 +1986,8 @@ export function useChat(roomId: string) {
     endCall,
     toggleMic,
     toggleCamera,
+    upgradeCallToVideo,
+    toggleScreenShare,
     switchCamera,
     clearCallLogs,
   };
