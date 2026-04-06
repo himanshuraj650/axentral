@@ -732,18 +732,34 @@ export function useChat(roomId: string) {
     iv: string;
     timestamp: number;
   }) => {
+    console.log('[DEBUG] Received encrypted message payload:', data);
     if (!sharedSecretRef.current) {
+      console.warn('[DEBUG] No shared secret, queuing message:', data);
       pendingEncryptedMessagesRef.current.push(data);
       return;
     }
 
-    const decryptedJson = await decryptMessage(
-      data.encryptedPayload,
-      data.iv,
-      sharedSecretRef.current
-    );
+    let decryptedJson;
+    try {
+      decryptedJson = await decryptMessage(
+        data.encryptedPayload,
+        data.iv,
+        sharedSecretRef.current
+      );
+      console.log('[DEBUG] Decrypted message JSON:', decryptedJson);
+    } catch (err) {
+      console.error('[DEBUG] Failed to decrypt message:', err, data);
+      return;
+    }
 
-    const innerPayload = JSON.parse(decryptedJson);
+    let innerPayload;
+    try {
+      innerPayload = JSON.parse(decryptedJson);
+      console.log('[DEBUG] Parsed inner payload:', innerPayload);
+    } catch (err) {
+      console.error('[DEBUG] Failed to parse decrypted JSON:', err, decryptedJson);
+      return;
+    }
 
     const expiresAt = innerPayload.destructTimer
       ? Date.now() + innerPayload.destructTimer * 1000
@@ -759,6 +775,7 @@ export function useChat(roomId: string) {
       expiresAt,
     };
 
+    console.log('[DEBUG] Adding new message to chat:', newMessage);
     setMessages((prev) => [...prev, newMessage]);
   }, []);
 
