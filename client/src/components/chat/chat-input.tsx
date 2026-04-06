@@ -17,6 +17,9 @@ interface ChatInputProps {
 }
 
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB
+const MAX_IMAGE_DIMENSION = 1600;
+const IMAGE_OUTPUT_QUALITY = 0.82;
+const IMAGE_DIRECT_SEND_BYTES = 1.5 * 1024 * 1024;
 
 const TIMER_OPTIONS = [
   { label: "Off", value: null },
@@ -54,6 +57,54 @@ export function ChatInput({
     };
   }, []);
 
+  const optimizeImageFile = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const originalReader = new FileReader();
+
+      originalReader.onerror = () => reject(new Error("Failed to read image."));
+      originalReader.onload = () => {
+        const originalDataUrl = originalReader.result as string;
+
+        if (file.size <= IMAGE_DIRECT_SEND_BYTES) {
+          resolve(originalDataUrl);
+          return;
+        }
+
+        const img = new Image();
+        img.onerror = () => reject(new Error("Failed to load image."));
+        img.onload = () => {
+          const maxSide = Math.max(img.width, img.height);
+          const scale = maxSide > MAX_IMAGE_DIMENSION ? MAX_IMAGE_DIMENSION / maxSide : 1;
+          const targetWidth = Math.max(1, Math.round(img.width * scale));
+          const targetHeight = Math.max(1, Math.round(img.height * scale));
+
+          const canvas = document.createElement("canvas");
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
+
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve(originalDataUrl);
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+          const preferredType =
+            file.type === "image/png" && file.size <= 3 * 1024 * 1024
+              ? "image/png"
+              : "image/jpeg";
+
+          const optimizedDataUrl = canvas.toDataURL(preferredType, IMAGE_OUTPUT_QUALITY);
+          resolve(optimizedDataUrl);
+        };
+
+        img.src = originalDataUrl;
+      };
+
+      originalReader.readAsDataURL(file);
+    });
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
     onTyping(true);
@@ -81,7 +132,7 @@ export function ChatInput({
     }
   };
 
-  const handleAttachmentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAttachmentUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || disabled) {
       return;
@@ -93,24 +144,29 @@ export function ChatInput({
       return;
     }
 
+    if (file.type.startsWith("image/")) {
+      try {
+        const optimizedDataUrl = await optimizeImageFile(file);
+        onSendImage(optimizedDataUrl, timer);
+      } catch {
+        onAttachmentError?.("This image could not be processed.");
+      }
+      e.target.value = "";
+      return;
+    }
+
     const reader = new FileReader();
     reader.onloadend = () => {
       const dataUrl = reader.result as string;
-
-      if (file.type.startsWith("image/")) {
-        onSendImage(dataUrl, timer);
-      } else {
-        onSendFile(
-          {
-            name: file.name,
-            mimeType: file.type || "application/octet-stream",
-            size: file.size,
-            dataUrl,
-          },
-          timer
-        );
-      }
-
+      onSendFile(
+        {
+          name: file.name,
+          mimeType: file.type || "application/octet-stream",
+          size: file.size,
+          dataUrl,
+        },
+        timer
+      );
       e.target.value = "";
     };
 
