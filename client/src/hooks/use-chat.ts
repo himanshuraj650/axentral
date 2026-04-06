@@ -1560,45 +1560,63 @@ export function useChat(roomId: string) {
     const nextFacing = currentCall.cameraFacing === "environment" ? "user" : "environment";
 
     try {
-      const replacementStream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: nextFacing },
-        },
-      });
-
-      const nextVideoTrack = replacementStream.getVideoTracks()[0];
-      if (!nextVideoTrack) {
-        throw new Error("No video track available.");
-      }
-
-      nextVideoTrack.enabled = !currentCall.cameraOff;
-
-      const sender = pcRef.current
-        .getSenders()
-        .find((item) => item.track?.kind === "video");
-
-      if (!sender) {
-        replacementStream.getTracks().forEach((track) => track.stop());
+      const currentVideoTrack = currentStream.getVideoTracks()[0];
+      if (!currentVideoTrack) {
         return false;
       }
 
-      await sender.replaceTrack(nextVideoTrack);
+      try {
+        await currentVideoTrack.applyConstraints({
+          facingMode: nextFacing,
+        } as MediaTrackConstraints);
 
-      const audioTracks = currentStream.getAudioTracks();
-      const oldVideoTracks = currentStream.getVideoTracks();
-      oldVideoTracks.forEach((track) => track.stop());
+        setCallState((prev) => ({
+          ...prev,
+          cameraFacing: nextFacing,
+          localStream: currentStream,
+        }));
 
-      const updatedStream = new MediaStream([...audioTracks, nextVideoTrack]);
-      localStreamRef.current = updatedStream;
+        return true;
+      } catch {
+        const replacementStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: nextFacing },
+          },
+        });
 
-      setCallState((prev) => ({
-        ...prev,
-        localStream: updatedStream,
-        cameraFacing: nextFacing,
-      }));
+        const nextVideoTrack = replacementStream.getVideoTracks()[0];
+        if (!nextVideoTrack) {
+          throw new Error("No video track available.");
+        }
 
-      return true;
+        nextVideoTrack.enabled = !currentCall.cameraOff;
+
+        const sender = pcRef.current
+          .getSenders()
+          .find((item) => item.track?.kind === "video");
+
+        if (!sender) {
+          replacementStream.getTracks().forEach((track) => track.stop());
+          return false;
+        }
+
+        await sender.replaceTrack(nextVideoTrack);
+
+        currentStream.removeTrack(currentVideoTrack);
+        currentStream.addTrack(nextVideoTrack);
+        currentVideoTrack.stop();
+
+        localStreamRef.current = currentStream;
+
+        setCallState((prev) => ({
+          ...prev,
+          localStream: currentStream,
+          cameraFacing: nextFacing,
+        }));
+
+        return true;
+      }
     } catch (err) {
       console.error("Failed to switch camera", err);
       setCallState((prev) => ({
