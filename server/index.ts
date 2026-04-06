@@ -13,9 +13,8 @@ const API_RATE_WINDOW_MS = 60_000;
 const API_RATE_MAX_REQUESTS = 240;
 const apiRateMap = new Map<string, { count: number; windowStart: number }>();
 
-app.use(express.json({ limit: "256kb" }));
-
-app.use(express.urlencoded({ extended: false, limit: "64kb" }));
+app.use(express.json({ limit: "100mb" }));
+app.use(express.urlencoded({ extended: false, limit: "100mb" }));
 
 app.use((req, res, next) => {
   res.setHeader("X-Frame-Options", "DENY");

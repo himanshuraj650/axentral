@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Timer, X, Image as ImageIcon, Flame } from "lucide-react";
+import { Send, Timer, Image as ImageIcon, Flame, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -7,9 +7,16 @@ import { cn } from "@/lib/utils";
 interface ChatInputProps {
   onSendMessage: (text: string, destructTimer: number | null) => void;
   onSendImage: (image: string, destructTimer: number | null) => void;
+  onSendFile: (
+    file: { name: string; mimeType: string; size: number; dataUrl: string },
+    destructTimer: number | null
+  ) => void;
+  onAttachmentError?: (message: string) => void;
   onTyping: (isTyping: boolean) => void;
   disabled?: boolean;
 }
+
+const MAX_ATTACHMENT_BYTES = 100_000_000; // 100 MB
 
 const TIMER_OPTIONS = [
   { label: "Off", value: null },
@@ -19,7 +26,14 @@ const TIMER_OPTIONS = [
   { label: "5m", value: 300 },
 ];
 
-export function ChatInput({ onSendMessage, onSendImage, onTyping, disabled }: ChatInputProps) {
+export function ChatInput({
+  onSendMessage,
+  onSendImage,
+  onSendFile,
+  onAttachmentError,
+  onTyping,
+  disabled,
+}: ChatInputProps) {
   const [text, setText] = useState("");
   const [timer, setTimer] = useState<number | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -52,14 +66,37 @@ export function ChatInput({ onSendMessage, onSendImage, onTyping, disabled }: Ch
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file && !disabled) {
+    if (!file || disabled) {
+      return;
+    }
+
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      onAttachmentError?.("Attachment is too large. Max size is 1.2 MB.");
+      e.target.value = "";
+      return;
+    }
+
       const reader = new FileReader();
       reader.onloadend = () => {
-        const base64String = reader.result as string;
-        onSendImage(base64String, timer);
+        const dataUrl = reader.result as string;
+
+        if (file.type.startsWith("image/")) {
+          onSendImage(dataUrl, timer);
+        } else {
+          onSendFile(
+            {
+              name: file.name,
+              mimeType: file.type || "application/octet-stream",
+              size: file.size,
+              dataUrl,
+            },
+            timer
+          );
+        }
+
+        e.target.value = "";
       };
       reader.readAsDataURL(file);
-    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -79,7 +116,7 @@ export function ChatInput({ onSendMessage, onSendImage, onTyping, disabled }: Ch
           type="file" 
           ref={fileInputRef} 
           className="hidden" 
-          accept="image/*" 
+          accept="*/*" 
           onChange={handleImageUpload} 
         />
         
@@ -89,8 +126,20 @@ export function ChatInput({ onSendMessage, onSendImage, onTyping, disabled }: Ch
           className="shrink-0 rounded-lg h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]"
           disabled={disabled}
           onClick={() => fileInputRef.current?.click()}
+          title="Share image"
         >
           <ImageIcon className="w-5 h-5" />
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          className="shrink-0 rounded-lg h-9 w-9 text-muted-foreground hover:text-foreground hover:bg-secondary/80 hover-elevate dark:text-[#8696a0] dark:hover:text-[#d1dde5] dark:hover:bg-[#2a3942]"
+          disabled={disabled}
+          onClick={() => fileInputRef.current?.click()}
+          title="Share file"
+        >
+          <Paperclip className="w-5 h-5" />
         </Button>
 
         <Popover>
