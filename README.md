@@ -107,7 +107,7 @@ VITE_ICE_TRANSPORT_POLICY=relay
 ```
 
 ### Option 3: Any authenticated TURN provider
-Add these variables to your `.env` file:
+Add these variables to your `.env` file (copy from `.env.example` first):
 ```env
 TURN_URLS=turn:your-turn-host:3478,turns:your-turn-host:5349
 TURN_USERNAME=your-turn-username
