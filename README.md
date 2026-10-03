@@ -1,5 +1,3 @@
-TTDR55# Axyntrel
-
 ## Project Description
 Axyntrel is a powerful project built to simplify complex tasks using cutting-edge technology. It focuses on enhancing productivity and efficiency.
 
